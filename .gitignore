@@ -1,0 +1,16 @@
+.env*
+!.env.example
+node_modules/
+dist/
+target/
+maps/data/
+release-packs/
+packs/
+keys/
+*.jks
+keystore.properties
+release/
+*.log
+env.sh
+.impeccable/
+.kotlin/

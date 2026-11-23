@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>YOT</title>
+    <link rel="icon" href="/logo.png" />
+    <style>
+      /* Splash: painted by the HTML itself, before any script, so the logo is
+         the first thing on screen. main.tsx fades it once the app has rendered. */
+      #splash { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; align-content: center; gap: 18px;
+        background: radial-gradient(60% 45% at 50% 42%, #0a2a1c 0%, #060708 70%); transition: opacity 320ms ease; }
+      #splash img { width: 132px; height: 132px; animation: splash-in 520ms cubic-bezier(0.23, 1, 0.32, 1) both; }
+      #splash b { font: 700 15px/1 system-ui, sans-serif; letter-spacing: 0.32em; color: #9fe8c4; padding-left: 0.32em; animation: splash-in 520ms 90ms cubic-bezier(0.23, 1, 0.32, 1) both; }
+      #splash.out { opacity: 0; pointer-events: none; }
+      @keyframes splash-in { from { opacity: 0; transform: scale(0.94); } }
+      @media (prefers-reduced-motion: reduce) { #splash img, #splash b { animation: none; } }
+    </style>
+  </head>
+  <body>
+    <div id="splash" aria-hidden="true"><img src="/logo.png" alt="" /><b>YOT</b></div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

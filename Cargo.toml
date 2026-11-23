@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["crates/geo-core", "crates/packer", "app/src-tauri"]
+
+# Size-first release build: this is what keeps the APK and installer small.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+# The packer runs on the PC, where speed matters more than size.
+[profile.release.package.packer]
+opt-level = 3
+
+# Routing speed matters more than a few KB here.
+[profile.release.package.geo-core]
+opt-level = 3

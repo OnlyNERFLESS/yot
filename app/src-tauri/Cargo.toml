@@ -1,0 +1,38 @@
+[package]
+name = "app"
+version = "1.0.0"
+description = "YOT: offline maps, metro, reminders and tasks"
+authors = ["you"]
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+geo-core = { path = "../../crates/geo-core" }
+rusqlite = { version = "0.43", features = ["bundled"] }
+
+[features]
+# Release builds carry the offline map data inside the app and install it on
+# first launch: `tauri build -f bundled-packs`. Dev builds leave it out.
+bundled-packs = []
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-geolocation = "2"
+
+
+# Release profile lives in the workspace root Cargo.toml.
