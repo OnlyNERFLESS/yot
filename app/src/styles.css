@@ -570,7 +570,7 @@ a.btn { text-decoration: none; }
 
 /* Idle: location status first, legible at a glance. */
 .sh-idle { grid-template-columns: 1fr auto; }
-.sh-idle .status { grid-column: 1; justify-content: flex-start; font-size: 14px; }
+.sh-idle .status { grid-column: 1; justify-content: flex-start; align-items: center; font-family: var(--font-body); font-size: 14px; }
 .sh-idle .btn { grid-column: 2; grid-row: 1 / span 2; }
 .sh-idle .hint { grid-column: 1; margin: 0; }
 .lamp.device { background: var(--accent); opacity: 0.55; }
@@ -1564,8 +1564,17 @@ input[type='checkbox']:checked { background: var(--accent); border-color: var(--
   background: var(--accent-wash); color: var(--accent-text); border: 1px solid var(--accent);
 }
 .loc-ask-ic svg { width: 26px; height: 26px; }
-.loc-off { display: inline-flex; gap: 8px; align-items: center; color: var(--accent-text); font-weight: 650; text-decoration: underline; text-underline-offset: 3px; padding: 0; min-height: 32px; }
-.loc-off .warn { text-decoration: none; }
+/* Location off: one tappable chip in the body face, not the mono status text. */
+.sh-idle .status .loc-off {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 14px 6px 12px;
+  border-radius: 999px; border: 1px solid rgb(245 181 68 / 0.35); background: rgb(245 181 68 / 0.08);
+  font-family: var(--font-body); font-size: 14px; font-weight: 600; line-height: 1.2; letter-spacing: 0;
+  color: var(--accent-text); text-decoration: none; box-shadow: none;
+}
+.sh-idle .status .loc-off .warn { color: var(--warn); font-weight: 500; }
+.sh-idle .status .loc-off .warn::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); margin-inline-end: 8px; display: inline-block;
+}
 .fab.off svg { color: var(--warn, #f5a524); }
 
 /* ---------- Update dialog and the About row ---------- */
