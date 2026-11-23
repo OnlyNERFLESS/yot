@@ -1530,3 +1530,53 @@ input[type='checkbox']:checked { background: var(--accent); border-color: var(--
 
 /* Route search playback: two canvases laid over the map, never catching input. */
 .scan-web { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+
+/* ---------- Picking a route end: a pin under the map, one clear action ---------- */
+/* The pin stays still while the map moves under it; its tip marks the spot. */
+.pick-pin {
+  position: absolute; left: 50%; top: 50%; z-index: 4; pointer-events: none;
+  transform: translate(-50%, -100%); color: var(--accent);
+  filter: drop-shadow(0 6px 8px rgb(0 0 0 / 0.45));
+}
+.pick-pin svg { width: 44px; height: 44px; fill: var(--accent); stroke: var(--accent-ink); stroke-width: 1.6; }
+.pick-pin::after {
+  content: ''; position: absolute; left: 50%; bottom: -3px; width: 8px; height: 8px; margin-left: -4px;
+  border-radius: 50%; background: var(--accent-ink); border: 2px solid var(--accent);
+}
+.sh-pick { display: grid !important; gap: 10px; }
+.pick-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.pick-head .dot { width: 14px; height: 14px; }
+.pick-copy { min-width: 0; }
+.pick-title { margin: 0; font-weight: 700; font-size: 16px; }
+.pick-where { margin: 2px 0 0; color: var(--text-dim); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-help { margin: 0; }
+.sh-pick .btn-pair:has(> :only-child) { grid-template-columns: 1fr; }
+.sheet.snap-pick { transform: translateY(calc(86vh - 216px)); --vis: 216px; }
+.fabs-bottom.snap-pick { bottom: 228px; }
+@media (min-width: 900px) { .fabs-bottom.snap-pick { bottom: 24px; } }
+
+/* ---------- Location off: a prompt with a way out, not a grey line ---------- */
+.loc-ask { text-align: center; justify-items: center; max-width: 420px; }
+.loc-ask p { margin: 0; line-height: 1.5; }
+.loc-ask .qa-foot { width: 100%; }
+.loc-ask-ic {
+  width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-wash); color: var(--accent-text); border: 1px solid var(--accent);
+}
+.loc-ask-ic svg { width: 26px; height: 26px; }
+.loc-off { display: inline-flex; gap: 8px; align-items: center; color: var(--accent-text); font-weight: 650; text-decoration: underline; text-underline-offset: 3px; padding: 0; min-height: 32px; }
+.loc-off .warn { text-decoration: none; }
+.fab.off svg { color: var(--warn, #f5a524); }
+
+/* ---------- Update dialog and the About row ---------- */
+.upd { max-width: 460px; }
+.upd-ver { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; }
+.upd-ver .num { font-size: 22px; font-weight: 700; color: var(--accent-text); }
+.upd-sub { margin: 4px 0 0; font-weight: 650; }
+.upd-notes { margin: 0; padding-inline-start: 20px; display: grid; gap: 4px; line-height: 1.45; }
+.upd .qa-head h2 svg { color: var(--accent-text); }
+.spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: upd-spin 0.8s linear infinite; }
+.spinning { animation: upd-spin 0.8s linear infinite; }
+@keyframes upd-spin { to { transform: rotate(360deg); } }
+.about-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.about-row p { margin: 0; }

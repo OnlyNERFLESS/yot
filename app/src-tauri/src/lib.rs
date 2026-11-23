@@ -318,6 +318,62 @@ fn secret_get(db: State<Db>, name: String) -> R<Option<String>> {
 
 const RINGTONES: &[&str] = &["emerald", "pulse", "bloom", "marimba", "beacon"];
 
+/// Windows update: fetch the new installer with the curl.exe that ships with
+/// Windows (GitHub's download links refuse in-page fetches), then run it in
+/// passive mode. `/P` shows only a progress bar, `/UPDATE` installs over this
+/// copy, `/R` starts the new version when done; this one exits to make way.
+#[tauri::command]
+async fn update_install(app: tauri::AppHandle, url: String) -> R<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const NO_WINDOW: u32 = 0x0800_0000;
+        if !url.starts_with("https://github.com/OnlyNERFLESS/yot/releases/download/") {
+            return Err("unexpected update address".into());
+        }
+        let dest = std::env::temp_dir().join("YOT-update-setup.exe");
+        let d2 = dest.clone();
+        let out = tauri::async_runtime::spawn_blocking(move || {
+            std::process::Command::new("curl.exe")
+                .args(["-fsSL", "--retry", "2", "--connect-timeout", "20", "-o"])
+                .arg(&d2)
+                .arg(&url)
+                .creation_flags(NO_WINDOW)
+                .output()
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(format!("download failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        std::process::Command::new(&dest).args(["/P", "/R", "/UPDATE"]).spawn().map_err(|e| e.to_string())?;
+        app.exit(0);
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, url);
+        Err("not supported on this platform".into())
+    }
+}
+
+/// Opens the OS page where location access is switched on. Windows only: on
+/// Android the app asks for the permission itself.
+#[tauri::command]
+fn open_location_settings(app: tauri::AppHandle) -> R<()> {
+    #[cfg(windows)]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_url("ms-settings:privacy-location", None::<&str>).map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Err("not supported on this platform".into())
+    }
+}
+
 /// The tones ship inside the binary; Windows toasts need a real file path, so
 /// the chosen one is written to the app data folder once and its path returned.
 /// Android plays the copies in res/raw by resource name instead.
@@ -714,6 +770,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             sound_file,
+            open_location_settings,
+            update_install,
             route_explore,
             packs_list,
             packs_dir,

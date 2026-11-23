@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../app/ctx';
-import { Bell, BellOff, Check, Play } from 'lucide-react';
+import { Bell, BellOff, Check, Play, RefreshCw } from 'lucide-react';
+import { getVersion } from '@tauri-apps/api/app';
+import { findUpdate } from '../lib/updates';
+import { showUpdate } from '../ui/UpdatePrompt';
 import { api, RINGTONES, type Mode, type PackInfo, type Ringtone, type SavedPlace, type Track } from '../lib/api';
 import { playTone, remindersChanged } from '../lib/reminderEngine';
 import type { Key } from '../lib/i18n';
@@ -17,6 +20,21 @@ const TONE_NOTES: Record<Ringtone, Key> = {
 
 export function Panel({ active }: { active: boolean }) {
   const { t, lang, settings, update, go } = useApp();
+  const [version, setVersion] = useState('');
+  const [upd, setUpd] = useState<'idle' | 'checking' | 'latest' | 'failed'>('idle');
+  useEffect(() => {
+    void getVersion().then(setVersion);
+  }, []);
+  const checkUpdate = async () => {
+    setUpd('checking');
+    try {
+      const u = await findUpdate();
+      setUpd(u ? 'idle' : 'latest');
+      if (u) showUpdate(u);
+    } catch {
+      setUpd('failed');
+    }
+  };
   const [packs, setPacks] = useState<PackInfo[]>([]);
   const [dir, setDir] = useState('');
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -216,7 +234,14 @@ export function Panel({ active }: { active: boolean }) {
 
       <section className="card">
         <h2>{t('about')}</h2>
-        <p className="muted small">{t('version')} 0.1.0</p>
+        <div className="about-row">
+          <p className="muted small">{t('version')} <span className="num">{version}</span></p>
+          <button type="button" className="btn" disabled={upd === 'checking'} onClick={() => void checkUpdate()}>
+            <RefreshCw aria-hidden className={upd === 'checking' ? 'spinning' : ''} /> {t(upd === 'checking' ? 'updChecking' : 'updCheck')}
+          </button>
+        </div>
+        {upd === 'latest' && <p className="muted small">{t('updLatest')}</p>}
+        {upd === 'failed' && <p className="error">{t('updFailed')}</p>}
       </section>
     </div>
   );

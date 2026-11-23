@@ -54,3 +54,18 @@ navigation and place reminders; notifications for reminders.
 Live traffic and traffic-aware routes (Neshan) and satellite view (Google,
 only with a Google key). Maps, search, offline routes, metro, reminders and
 tasks all work with no connection.
+
+## Publishing a release (and how apps update)
+
+Installed copies check `https://api.github.com/repos/OnlyNERFLESS/yot/releases/latest`
+on launch and offer anything newer. Windows downloads `*-setup.exe` and installs
+it in place (`/P /R /UPDATE`); Android opens `*.apk` in the browser.
+
+1. Bump the version (above) and build both.
+2. Create a GitHub release tagged `v<version>` with bullet-point notes; the
+   bullets become the "What's new" list in the update popup.
+3. Attach the files with these exact names, so the README links and the
+   update check always find them: `YOT-android.apk`, `YOT-windows-setup.exe`,
+   `YOT-all.zip`, plus `SHA256SUMS.txt`.
+
+Copies older than 1.0.1 have no update check and must be updated by hand once.

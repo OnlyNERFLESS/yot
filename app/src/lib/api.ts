@@ -208,6 +208,7 @@ export const api = {
 
   settings: () => invoke<Settings>('settings_get'),
   /** Desktop: path of the tone on disk, for the OS notification. */
+  openLocationSettings: () => invoke<void>('open_location_settings'),
   soundFile: (name: Exclude<Ringtone, 'silent'>) => invoke<string>('sound_file', { name }),
   setSetting: <K extends keyof Settings>(key: K, value: Settings[K]) =>
     invoke<void>('settings_set', { key, value: JSON.stringify(value) }),

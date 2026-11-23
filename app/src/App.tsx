@@ -7,6 +7,7 @@ import { MapScreen } from './screens/MapScreen';
 import { Panel } from './screens/Panel';
 import { Tasks } from './screens/Tasks';
 import type { Key } from './lib/i18n';
+import { UpdatePrompt } from './ui/UpdatePrompt';
 import { onInAppAlert, snoozeReminder, SNOOZE_MINUTES, startReminderEngine, type InAppAlert } from './lib/reminderEngine';
 
 const NAV: { id: Screen; label: Key; Icon: LucideIcon }[] = [
@@ -80,6 +81,7 @@ function Shell() {
         <Tasks active={screen === 'tasks'} />
         <Panel active={screen === 'panel'} />
         <AlertBanner />
+        <UpdatePrompt />
       </main>
     </div>
   );

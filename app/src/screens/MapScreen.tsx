@@ -2,14 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, type PointerE
 import type { Map as MlMap, MapGeoJSONFeature } from 'maplibre-gl';
 import {
   ArrowLeftRight, Footprints as WalkIcon,
-  ArrowLeft, Banknote, BedDouble, Bike, Bookmark, Box, Car, CircleCheck, CircleDot, Clock, Coffee, Compass, Ellipsis, Flag,
+  ArrowLeft, Banknote, BedDouble, Bike, Bookmark, Box, Car, Check, CircleCheck, CircleDot, Clock, Coffee, Compass, Ellipsis, Flag,
   Footprints, Fuel, Globe, Hospital, Landmark, Layers, LayoutGrid, LocateFixed, MapPin, Navigation, Phone, Pill, Satellite,
   Search, Share2, ShoppingCart, SquareParking, TrafficCone, TrainFront, Utensils, Users, X, type LucideIcon,
 } from 'lucide-react';
 import { useApp } from '../app/ctx';
 import { api, type Hit, type LngLat, type Mode, type Route } from '../lib/api';
 import { fmtClock, fmtDistance, fmtDuration, humanError, instruction, kindLabel, nf, sep, type Key } from '../lib/i18n';
-import { watch, type Fix } from '../lib/location';
+import { isMobile, watch, type Fix } from '../lib/location';
 import { distM, isOffRoute, prepare, progress, type Prepared, type Progress } from '../lib/nav';
 import { findRoutes } from '../lib/routing';
 import { googleTiles, inIran } from '../lib/online';
@@ -114,6 +114,10 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   const [fix, setFix] = useState<Fix | null>(null);
   const [locErr, setLocErr] = useState<string | null>(null);
   const [follow, setFollow] = useState(false);
+  const [locTry, setLocTry] = useState(0); // bump to ask for location again
+  const [locAsk, setLocAsk] = useState(false);
+  const askedLoc = useRef(false);
+  const [pickLabel, setPickLabel] = useState('');
   const [bearing, setBearing] = useState(0);
   const [pitch, setPitch] = useState(0);
 
@@ -298,7 +302,33 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       alive = false;
       stop();
     };
-  }, []);
+  }, [locTry]);
+
+  // Location refused or switched off: say so once, as a prompt with a way to
+  // fix it, instead of a grey status line nobody reads.
+  useEffect(() => {
+    if (active && !metro && locErr && !fix && !askedLoc.current) {
+      askedLoc.current = true;
+      setLocAsk(true);
+    }
+  }, [active, metro, locErr, fix]);
+  useEffect(() => {
+    if (fix) setLocAsk(false);
+  }, [fix]);
+  // Windows: coming back from Location settings retries on its own. Not on
+  // phones, where retrying re-opens the permission dialog in a loop.
+  useEffect(() => {
+    if (!locErr || isMobile) return;
+    const again = () => {
+      if (document.visibilityState === 'visible') setLocTry((n) => n + 1);
+    };
+    window.addEventListener('focus', again);
+    document.addEventListener('visibilitychange', again);
+    return () => {
+      window.removeEventListener('focus', again);
+      document.removeEventListener('visibilitychange', again);
+    };
+  }, [locErr]);
 
   // ---------- push data to the map ----------
   useEffect(() => {
@@ -318,7 +348,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     const map = mapRef.current;
     if (!map || !ready) return;
     const pins = [
-      ...(nav || to ? [] : hits.map((h) => point([h.lon, h.lat], { role: 'hit' }))),
+      ...(nav || (to && !pickMode) ? [] : hits.map((h) => point([h.lon, h.lat], { role: 'hit' }))),
       ...(from ? [point(from.at, { role: 'from' })] : []),
       ...(to ? [point(to.at, { role: 'to' })] : []),
       ...(card && !to ? [point(card.at, { role: 'to' })] : []),
@@ -495,7 +525,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       const place: Place = { at, label: label?.ui ?? fmtLL(at), fa: label?.fa ?? '' };
       if (pickMode === 'from') setFrom(place);
       else setTo(place);
-      setPickMode(null);
+      setPickMode(pickMode === 'from' && !to ? 'to' : null);
       setNote(null);
       setSnap('half');
       return;
@@ -519,7 +549,24 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   pickRef.current = pickMode;
   navRef.current = nav !== null;
 
+  /** Choose a route end: a clean search box, so the pin view shows first. */
+  const beginPick = (m: 'from' | 'to') => {
+    setQuery('');
+    setPickMode(m);
+  };
+
   const chooseHit = (h: Hit) => {
+    if (pickMode) {
+      const place: Place = { at: [h.lon, h.lat], label: nameOf(h), fa: [h.name || h.name_en, h.address].filter(Boolean).join('، ') };
+      if (pickMode === 'from') setFrom(place);
+      else setTo(place);
+      setPickMode(pickMode === 'from' && !to ? 'to' : null);
+      setQuery('');
+      setHits([]);
+      setListTitle(null);
+      setSnap('half');
+      return;
+    }
     openCard(cardFromHit(h));
     mapRef.current?.flyTo({ center: [h.lon, h.lat], zoom: Math.max(mapRef.current.getZoom(), 15.5), duration: ms(600) });
   };
@@ -529,11 +576,62 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     setCard(null);
     setArrived(null);
     setSnap('half');
-    if (!here && !from) setPickMode('from');
+    if (!here && !from) beginPick('from');
   };
 
   const showDriverFor = (c: { fa: string; faLine: string; en: string; at: LngLat }) =>
     setDriver({ fa: c.fa || c.en, faLine: c.faLine, en: c.en, distanceM: here ? distM(here, c.at) : null });
+
+  /** The location button: go there now, or explain why it can't. */
+  const locateMe = () => {
+    setFollow(true);
+    const map = mapRef.current;
+    if (nav) return;
+    if (fix && map) {
+      map.flyTo({ center: [fix.lng, fix.lat], zoom: Math.max(map.getZoom(), 15.5), duration: ms(700) });
+      return;
+    }
+    if (locErr) setLocAsk(true);
+    else setNote({ text: t('locatingHint'), kind: 'info' });
+  };
+  const allowLocation = () => {
+    setLocAsk(false);
+    if (isMobile) {
+      setLocErr(null);
+      setLocTry((n) => n + 1);
+    } else void api.openLocationSettings().catch(warn);
+  };
+  const useMyLocation = () => {
+    if (!here) return locateMe();
+    setFrom(null);
+    setPickMode(to ? null : 'to');
+    setSnap('half');
+  };
+  const startFromCard = (c: Card) => {
+    setFrom({ at: c.at, label: c.name || fmtLL(c.at), fa: [c.fa, c.faLine].filter(Boolean).join('، ') });
+    setCard(null);
+    if (!to) beginPick('to');
+    setSnap('half');
+  };
+
+  // Pick mode: name the spot under the centre pin as the map settles.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!pickMode || !map) return;
+    let live = true;
+    const name = () => {
+      const at = map.getCenter().toArray() as LngLat;
+      void roadLabel(at).then((l) => live && setPickLabel(l?.ui ?? fmtLL(at)));
+    };
+    name();
+    map.on('moveend', name);
+    return () => {
+      live = false;
+      map.off('moveend', name);
+      setPickLabel('');
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickMode, ready]);
 
   // ---------- routing ----------
   const plan = useCallback(
@@ -878,15 +976,31 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     </div>
   );
 
+  // Searching for an endpoint swaps the pick sheet for the result list.
+  const pickSearch = !!pickMode && query.trim().length >= 2;
   let sheet: ReactNode = null;
   let sheetLabel = t('route');
-  if (!nav && pickMode) {
+  if (!nav && pickMode && !pickSearch) {
     sheetLabel = t(pickMode === 'from' ? 'chooseStartLine' : 'chooseEndLine');
     sheet = (
       <div className="sh-pick">
-        <MapPin aria-hidden />
-        <p>{sheetLabel}</p>
-        <button type="button" className="btn ghost" onClick={() => setPickMode(null)}>{t('cancel')}</button>
+        <div className="pick-head">
+          <i className={`dot ${pickMode}`} aria-hidden />
+          <div className="pick-copy">
+            <p className="pick-title">{sheetLabel}</p>
+            <p className="pick-where" aria-live="polite">{pickLabel || '…'}</p>
+          </div>
+          <button type="button" className="icon-btn" onClick={() => setPickMode(null)} aria-label={t('cancel')}><X aria-hidden /></button>
+        </div>
+        <div className="btn-pair">
+          {pickMode === 'from' && (
+            <button type="button" className="btn lg" onClick={useMyLocation}><LocateFixed aria-hidden /> {t('myLocation')}</button>
+          )}
+          <button type="button" className="btn primary lg" onClick={() => void tapEmpty(center())}>
+            <Check aria-hidden /> {t(pickMode === 'from' ? 'pickSetStart' : 'pickSetEnd')}
+          </button>
+        </div>
+        <p className="muted small pick-help">{t('pickHelp')}</p>
       </div>
     );
   } else if (!nav && arrived) {
@@ -905,18 +1019,18 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
         {noteView}
       </div>
     );
-  } else if (!nav && to) {
+  } else if (!nav && to && !pickSearch) {
     sheet = (
       <div className="sh-plan">
         <div className="sh-head">
           <button type="button" className="icon-btn" onClick={clearAll} aria-label={t('clear')}><ArrowLeft aria-hidden /></button>
           <div className="endpoints">
-            <button type="button" className="ep" onClick={() => setPickMode('from')} title={t('chooseOnMap')}>
+            <button type="button" className="ep" onClick={() => beginPick('from')} title={t('chooseOnMap')}>
               <i className="dot from" aria-hidden />
               <span>{from ? from.label : here ? t('myLocation') : t('tapToSetStart')}</span>
               <MapPin aria-hidden className="ep-pick" />
             </button>
-            <button type="button" className="ep" onClick={() => setPickMode('to')} title={t('chooseOnMap')}>
+            <button type="button" className="ep" onClick={() => beginPick('to')} title={t('chooseOnMap')}>
               <i className="dot to" aria-hidden />
               <span>{to.label}</span>
               <MapPin aria-hidden className="ep-pick" />
@@ -986,6 +1100,9 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
           <button type="button" className="act primary" onClick={() => directionsTo(card)}>
             <span className="act-ic"><Navigation aria-hidden /></span><span className="act-l">{t('directions')}</span>
           </button>
+          <button type="button" className="act" onClick={() => startFromCard(card)}>
+            <span className="act-ic"><Flag aria-hidden /></span><span className="act-l">{t('setFrom')}</span>
+          </button>
           {(card.fa || card.en) && (
             <button type="button" className="act" onClick={() => showDriverFor(card)}>
               <span className="act-ic"><Users aria-hidden /></span><span className="act-l">{t('showDriver')}</span>
@@ -1002,7 +1119,6 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
           <div className="card-more">
             {phone && <a className="btn" href={`tel:${phone}`}><Phone aria-hidden /> {t('call')}</a>}
             <button type="button" className="btn" onClick={() => copyCard(card)}><Share2 aria-hidden /> {t('share')}</button>
-            <button type="button" className="btn" onClick={() => { setFrom({ at: card.at, label: card.name, fa: card.fa }); setCard(null); }}><Flag aria-hidden /> {t('setFrom')}</button>
           </div>
         )}
         {placeName !== null && (
@@ -1036,10 +1152,10 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       </div>
     );
   } else if (!nav && (hits.length > 0 || listTitle)) {
-    sheetLabel = listTitle ?? t('searchPlaceholder');
+    sheetLabel = pickMode ? t(pickMode === 'from' ? 'searchStart' : 'searchEnd') : listTitle ?? t('searchPlaceholder');
     sheet = (
       <div className="sh-list">
-        <p className="sh-title">{listTitle ?? t('searchPlaceholder')}</p>
+        <p className="sh-title">{sheetLabel}</p>
         {searching ? (
           <ul className="hits" aria-busy="true">
             {[0, 1, 2, 3].map((i) => <li key={i}><div className="hit-skeleton" /></li>)}
@@ -1180,13 +1296,18 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       <div className="sh-idle">
         <p className="status">
           <span><i className={online ? 'lamp live' : 'lamp device'} aria-hidden />{online ? t('online') : t('offline')}</span>
-          <span className={locErr ? 'warn' : ''}>{gpsText}</span>
+          {locErr && !fix ? (
+            <button type="button" className="loc-off" onClick={() => setLocAsk(true)}><span className="warn">{gpsText}</span>{t('locFix')}</button>
+          ) : (
+            <span>{gpsText}</span>
+          )}
           {noPack && <span className="warn">{t('noPacks')}</span>}
         </p>
         <button type="button" className={trackId !== null ? 'btn rec-btn is-rec' : 'btn rec-btn'} onClick={() => void toggleRecord()} aria-pressed={trackId !== null}>
           <CircleDot aria-hidden />
           {trackId !== null ? `${t('recording')}${sep(lang)}${fmtDistance(lang, trackDistance(trackLine))}` : t('quickRecord')}
         </button>
+        {noteView}
       </div>
     );
   }
@@ -1217,7 +1338,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
         <div className="topbar">
           <div className="searchpill">
             <Search aria-hidden />
-            <input id="map-search" type="search" value={query} placeholder={t('searchPlaceholder')} onChange={(e) => setQuery(e.target.value)} autoComplete="off" aria-label={t('searchPlaceholder')} />
+            <input id="map-search" type="search" value={query} placeholder={t(pickMode === 'from' ? 'searchStart' : pickMode === 'to' ? 'searchEnd' : 'searchPlaceholder')} onChange={(e) => setQuery(e.target.value)} autoComplete="off" aria-label={t('searchPlaceholder')} />
             {(query || to || hits.length > 0 || card) && (
               <button type="button" className="icon-btn" onClick={clearAll} aria-label={t('clear')}><X aria-hidden /></button>
             )}
@@ -1270,8 +1391,10 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
 
       {trackId !== null && !nav && <span className="rec-badge"><i aria-hidden />REC</span>}
 
-      <div className={`fabs-bottom snap-${nav ? 'nav' : sheet ? snap : 'none'}`}>
-        <button type="button" className={follow ? 'fab on' : 'fab'} onClick={() => setFollow(true)} aria-label={nav ? t('recenter') : t('myLocation')} title={t('myLocation')}>
+      {pickMode && !pickSearch && !nav && <div className="pick-pin" aria-hidden><MapPin /></div>}
+
+      <div className={`fabs-bottom snap-${nav ? 'nav' : !sheet ? 'none' : pickMode && !pickSearch ? 'pick' : snap}`}>
+        <button type="button" className={`fab${follow && fix ? ' on' : ''}${locErr && !fix ? ' off' : ''}`} onClick={locateMe} aria-label={nav ? t('recenter') : t('myLocation')} title={t('myLocation')}>
           <LocateFixed aria-hidden />
         </button>
       </div>
@@ -1297,7 +1420,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       )}
 
       {!nav && sheet && (
-        <section className={`sheet snap-${pickMode ? 'pick' : snap}`} aria-label={sheetLabel}>
+        <section className={`sheet snap-${pickMode && !pickSearch ? 'pick' : snap}`} aria-label={sheetLabel}>
           {!pickMode && (
             <button type="button" className="grab" onPointerDown={onHandleDown} onPointerUp={onHandleUp} aria-label={sheetLabel}>
               <i aria-hidden />
@@ -1308,6 +1431,22 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       )}
 
       {driver && <DriverView target={driver} onClose={() => setDriver(null)} />}
+      {locAsk && (
+        <div className="qa-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) setLocAsk(false); }}>
+          <section className="qa loc-ask" role="dialog" aria-modal="true" aria-labelledby="loc-ask-title">
+            <span className="loc-ask-ic" aria-hidden><LocateFixed /></span>
+            <h2 id="loc-ask-title">{t('locAskTitle')}</h2>
+            <p>{t('locAskWhy')}</p>
+            <p className="muted">{t(isMobile ? 'locAskPhone' : 'locAskPc')}</p>
+            <footer className="qa-foot">
+              <button type="button" className="btn" onClick={() => setLocAsk(false)}>{t('notNow')}</button>
+              <button type="button" className="btn primary" onClick={allowLocation}>
+                <LocateFixed aria-hidden /> {t(isMobile ? 'locAllow' : 'locOpenSettings')}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

@@ -6,18 +6,18 @@
 Android and Windows, English and Persian (RTL), one codebase.</p>
 
 <p align="center">
-  <a href="https://github.com/OnlyNERFLESS/yot/releases/latest/download/YOT-1.0.0-android.apk"><img alt="Download for Android" src="https://img.shields.io/badge/Download-Android%20APK-16db65?style=for-the-badge&logo=android&logoColor=white"></a>
-  <a href="https://github.com/OnlyNERFLESS/yot/releases/latest/download/YOT-1.0.0-windows-setup.exe"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows%20installer-058c42?style=for-the-badge&logo=windows&logoColor=white"></a>
-  <a href="https://github.com/OnlyNERFLESS/yot/releases/latest/download/YOT-1.0.0-all.zip"><img alt="Download both (zip)" src="https://img.shields.io/badge/Download-Both%20(zip)-0a1f12?style=for-the-badge&logo=files&logoColor=white"></a>
+  <a href="https://github.com/OnlyNERFLESS/yot/releases/latest/download/YOT-android.apk"><img alt="Download for Android" src="https://img.shields.io/badge/Download-Android%20APK-16db65?style=for-the-badge&logo=android&logoColor=white"></a>
+  <a href="https://github.com/OnlyNERFLESS/yot/releases/latest/download/YOT-windows-setup.exe"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows%20installer-058c42?style=for-the-badge&logo=windows&logoColor=white"></a>
+  <a href="https://github.com/OnlyNERFLESS/yot/releases/latest/download/YOT-all.zip"><img alt="Download both (zip)" src="https://img.shields.io/badge/Download-Both%20(zip)-0a1f12?style=for-the-badge&logo=files&logoColor=white"></a>
 </p>
 
 ## Download
 
 | Platform | File | Size |
 | --- | --- | --- |
-| Android 7+ (64-bit) | [YOT-1.0.0-android.apk](https://github.com/OnlyNERFLESS/yot/releases/latest/download/YOT-1.0.0-android.apk) | 68 MB |
-| Windows 10 / 11 | [YOT-1.0.0-windows-setup.exe](https://github.com/OnlyNERFLESS/yot/releases/latest/download/YOT-1.0.0-windows-setup.exe) | 49 MB |
-| Both | [YOT-1.0.0-all.zip](https://github.com/OnlyNERFLESS/yot/releases/latest/download/YOT-1.0.0-all.zip) | 107 MB |
+| Android 7+ (64-bit) | [YOT-android.apk](https://github.com/OnlyNERFLESS/yot/releases/latest/download/YOT-android.apk) | 68 MB |
+| Windows 10 / 11 | [YOT-windows-setup.exe](https://github.com/OnlyNERFLESS/yot/releases/latest/download/YOT-windows-setup.exe) | 49 MB |
+| Both | [YOT-all.zip](https://github.com/OnlyNERFLESS/yot/releases/latest/download/YOT-all.zip) | 107 MB |
 
 Checksums and release notes: [all releases](https://github.com/OnlyNERFLESS/yot/releases).
 
@@ -33,6 +33,7 @@ The maps, routing, search and metro are built in, so there is nothing to set up.
 **Map and navigation**
 - Full offline vector map of Tehran, with a light overview of all of Iran underneath that hands over seamlessly at city zoom.
 - Offline search over streets, places and stations (English and Persian, tolerant of spelling and digit variants).
+- Choose a start or destination by search, by moving the map under a pin, or with "Start here" on any place.
 - Offline turn-by-turn routing by car and on foot, computed on the device by a Rust A\* router.
 - A "finding your route" animation: the router's real search is played back as glowing threads spreading along the actual streets until one reaches the destination, then the chosen route draws itself in.
 - Live traffic and traffic-aware routes through Neshan when online; satellite view with an optional Google key.
@@ -51,6 +52,7 @@ The maps, routing, search and metro are built in, so there is nothing to set up.
 
 **Everywhere**
 - Works with no connection: maps, search, routes, metro, reminders and tasks.
+- Checks for new versions on launch and updates from this repo's releases (one tap on Windows, a browser download on Android).
 - Dark and light themes, emerald on evergreen-black.
 - Full Persian translation with right-to-left layout.
 

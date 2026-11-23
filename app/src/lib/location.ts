@@ -13,11 +13,14 @@ export interface Fix {
 export type FixHandler = (fix: Fix) => void;
 export type ErrorHandler = (message: string) => void;
 
-const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+export const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
 
 /** Start watching; returns a stop function. */
 export async function watch(onFix: FixHandler, onError: ErrorHandler): Promise<() => void> {
   if (isMobile) {
+    // Any failure here (location services off, permission refused) must reach
+    // onError: a rejected promise used to vanish and the map just sat waiting.
+    try {
     const geo = await import('@tauri-apps/plugin-geolocation');
     let perm = await geo.checkPermissions();
     if (perm.location !== 'granted') perm = await geo.requestPermissions(['location']);
@@ -34,6 +37,10 @@ export async function watch(onFix: FixHandler, onError: ErrorHandler): Promise<(
       onFix({ lng: c.longitude, lat: c.latitude, accuracy: c.accuracy, speed: c.speed ?? null, heading: c.heading ?? null, t: pos.timestamp });
     });
     return () => void geo.clearWatch(id);
+    } catch (e) {
+      onError(String(e instanceof Error ? e.message : e));
+      return () => {};
+    }
   }
   if (!('geolocation' in navigator)) {
     onError('Location is not available on this device');
