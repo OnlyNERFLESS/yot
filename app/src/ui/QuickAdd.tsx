@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { parseLines, startOf, type QuickItem } from '../lib/quickparse';
 import { remindersChanged } from '../lib/reminderEngine';
 import { nf } from '../lib/i18n';
+import { useBack } from '../lib/back';
 
 export type QuickKind = 'reminder' | 'task';
 
@@ -42,6 +43,8 @@ export function QuickAdd({ open, kind: initialKind, defaultDate, onClose, onSave
     () => parseLines(text).map((q) => (q.date || !defaultDate ? q : { ...q, date: defaultDate })),
     [text, defaultDate],
   );
+
+  useBack(() => (open ? (closeRef.current(), true) : false));
 
   if (!open) return null;
 

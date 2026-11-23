@@ -1,4 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { onBackButtonPress } from '@tauri-apps/api/app';
+import { invoke } from '@tauri-apps/api/core';
+import { runBack, useBack } from './lib/back';
+import { isMobile } from './lib/location';
 import { Bell, CalendarDays, House, ListChecks, Map as MapIcon, MapPin, Settings, TrainFront, X, type LucideIcon } from 'lucide-react';
 import { AppProvider, useApp, type Screen } from './app/ctx';
 import { Calendar } from './screens/Calendar';
@@ -24,6 +28,7 @@ function AlertBanner() {
   const { t, lang, go } = useApp();
   const [alert, setAlert] = useState<InAppAlert | null>(null);
   useEffect(() => onInAppAlert(setAlert), []);
+  useBack(() => (alert ? (setAlert(null), true) : false));
   if (!alert) return null;
   const r = alert.reminder;
   return (
@@ -60,6 +65,36 @@ function Shell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
+
+  // Android Back: close what is open; else go Home; on Home, press twice to exit.
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+  const goRef = useRef(go);
+  goRef.current = go;
+  const lastBack = useRef(0);
+  const [exitHint, setExitHint] = useState(false);
+  useEffect(() => {
+    if (!isMobile) return;
+    let alive = true;
+    let stop = () => {};
+    void onBackButtonPress(() => {
+      if (runBack()) return;
+      if (screenRef.current !== 'home') return goRef.current('home');
+      const now = Date.now();
+      if (now - lastBack.current < 2000) return void invoke('app_quit');
+      lastBack.current = now;
+      setExitHint(true);
+      window.setTimeout(() => setExitHint(false), 2000);
+    }).then((l) => {
+      if (alive) stop = () => void l.unregister();
+      else void l.unregister();
+    });
+    return () => {
+      alive = false;
+      stop();
+    };
+  }, []);
+
   return (
     <div className="shell">
       <nav className="rail" aria-label="YOT">
@@ -82,6 +117,7 @@ function Shell() {
         <Panel active={screen === 'panel'} />
         <AlertBanner />
         <UpdatePrompt />
+        {exitHint && <div className="toast" role="status">{t('backToExit')}</div>}
       </main>
     </div>
   );

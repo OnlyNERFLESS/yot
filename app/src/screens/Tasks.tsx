@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { useBack } from '../lib/back';
 import { useApp } from '../app/ctx';
 import { api, type Priority, type Task } from '../lib/api';
 import { today } from './Home';
@@ -16,6 +17,7 @@ export function Tasks({ active }: { active: boolean }) {
   const [editing, setEditing] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [quick, setQuick] = useState(false);
+  useBack(() => (active && editing !== null ? (setEditing(null), true) : false));
 
   const load = () => void api.tasks().then(setTasks);
   useEffect(() => {

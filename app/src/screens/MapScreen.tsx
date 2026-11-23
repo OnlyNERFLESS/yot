@@ -18,6 +18,7 @@ import {
   set3dVisible, setBasemapHidden, setData, setGoogleBase, setMetroVisible, setTrafficVisible, type BasePacks,
 } from '../map/setup';
 import { TurnIcon } from '../ui/TurnIcon';
+import { useBack } from '../lib/back';
 import { addRecent, clearRecent, onRecentChange, recentList, type Recent } from '../lib/recent';
 import { DriverView, type DriverTarget } from '../ui/DriverView';
 import { startRouteScan } from '../map/routeScan';
@@ -706,6 +707,29 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     setArrived(null);
     setSnap('peek');
   };
+
+  // Android Back: close the newest thing first, one step per press.
+  useBack(() => {
+    if (!active) return false;
+    if (locAsk) return setLocAsk(false), true;
+    if (driver) return setDriver(null), true;
+    if (layersOpen) return setLayersOpen(false), true;
+    if (metro) {
+      if (station) return setStation(null), true;
+      if (mPick) return setMPick(null), true;
+      if (mFrom !== null || mTo !== null) return setMFrom(null), setMTo(null), true;
+      return false;
+    }
+    if (nav) return stopNav(), true;
+    if (pickMode) return setPickMode(null), setQuery(''), setSnap('half'), true;
+    if (placeName !== null) return setPlaceName(null), true;
+    if (card) return setCard(null), true;
+    if (catsOpen) return setCatsOpen(false), true;
+    if (arrived || to || routes.length) return clearAll(), true;
+    if (query || hits.length || cat) return setQuery(''), setHits([]), setCat(null), setListTitle(null), true;
+    if (snap !== 'peek') return setSnap('peek'), true;
+    return false;
+  });
 
   useEffect(() => {
     if (!nav || !fix || !to) return;

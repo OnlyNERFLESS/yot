@@ -299,6 +299,37 @@ export function set3dVisible(map: MlMap, on: boolean, navigating = false) {
     navigating ? 0.45 : ['interpolate', ['linear'], ['zoom'], 14.5, 0, 15.5, 0.85]);
 }
 
+// Lucide's map-pin outline, drawn once per style into a small bitmap.
+const PIN_PATH = 'M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0';
+function pinImage(fill: string, hole: string) {
+  const ratio = 2;
+  const size = 26; // CSS px: a 24px pin plus room for its outline
+  const c = document.createElement('canvas');
+  c.width = c.height = size * ratio;
+  const g = c.getContext('2d')!;
+  g.scale(ratio, ratio);
+  g.translate(1, 1);
+  const pin = new Path2D(PIN_PATH);
+  g.fillStyle = fill;
+  g.strokeStyle = '#060708';
+  g.lineWidth = 1.6;
+  g.lineJoin = 'round';
+  g.fill(pin);
+  g.stroke(pin);
+  g.beginPath();
+  g.arc(12, 10, 3.2, 0, Math.PI * 2);
+  g.fillStyle = hole;
+  g.fill();
+  return { image: g.getImageData(0, 0, c.width, c.height), ratio };
+}
+function addPinImages(map: MlMap) {
+  for (const [id, fill, hole] of [['yot-pin-to', '#16db65', '#060708'], ['yot-pin-from', '#ffffff', '#060708']] as const) {
+    if (map.hasImage(id)) continue;
+    const { image, ratio } = pinImage(fill, hole);
+    map.addImage(id, image, { pixelRatio: ratio });
+  }
+}
+
 /** Our own layers, prefixed tb-, re-added after every style change. */
 export function addOverlays(map: MlMap) {
   const src = (id: string) => {
@@ -314,19 +345,20 @@ export function addOverlays(map: MlMap) {
     paint: { 'line-color': '#022c16', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 14, 7.5, 17, 10] } });
   add({ id: 'tb-route', type: 'line', source: 'tb-route', layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: { 'line-color': '#16db65', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 14, 4.5, 17, 6.5] } });
-  add({ id: 'tb-pins', type: 'circle', source: 'tb-pins',
-    paint: {
-      // Amber belongs to traffic. Places are white pins on a ground-coloured
-      // ring, the start is the inverse, the destination is the one emerald mark.
-      'circle-radius': ['match', ['get', 'role'], 'to', 9, 'from', 7, 6],
-      'circle-color': ['match', ['get', 'role'], 'to', '#16db65', 'from', '#060708', '#ffffff'],
-      'circle-stroke-color': ['match', ['get', 'role'], 'from', '#ffffff', '#060708'],
-      'circle-stroke-width': 3,
+  // Search results stay small white dots; the start and the destination are
+  // map-pin icons standing on their point (white start, emerald destination).
+  add({ id: 'tb-hits', type: 'circle', source: 'tb-pins', filter: ['==', ['get', 'role'], 'hit'],
+    paint: { 'circle-radius': 5, 'circle-color': '#ffffff', 'circle-stroke-color': '#060708', 'circle-stroke-width': 2 } });
+  addPinImages(map);
+  add({ id: 'tb-pins', type: 'symbol', source: 'tb-pins', filter: ['!=', ['get', 'role'], 'hit'],
+    layout: {
+      'icon-image': ['match', ['get', 'role'], 'from', 'yot-pin-from', 'yot-pin-to'],
+      'icon-anchor': 'bottom', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
     } });
   add({ id: 'tb-pos-acc', type: 'circle', source: 'tb-pos', filter: ['==', ['get', 'kind'], 'acc'],
-    paint: { 'circle-color': '#16db65', 'circle-opacity': 0.14, 'circle-radius': ['get', 'px'] } });
+    paint: { 'circle-color': '#16db65', 'circle-opacity': 0.12, 'circle-radius': ['get', 'px'] } });
   add({ id: 'tb-pos', type: 'circle', source: 'tb-pos', filter: ['==', ['get', 'kind'], 'dot'],
-    paint: { 'circle-radius': 8, 'circle-color': '#16db65', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 } });
+    paint: { 'circle-radius': 5.5, 'circle-color': '#16db65', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } });
 }
 
 // ---------------- metro ----------------

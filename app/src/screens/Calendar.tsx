@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Bell, CalendarDays, Check, ChevronLeft, ChevronRight, ListChecks, MapPin, Navigation, Plus, Repeat as RepeatIcon, Trash2, X, Zap,
 } from 'lucide-react';
+import { useBack } from '../lib/back';
 import { useApp } from '../app/ctx';
 import { api, type Reminder, type ReminderInput, type Repeat, type SavedPlace, type Task } from '../lib/api';
-import { fromJalali, holidayOf, JALALI_MONTHS, JALALI_MONTHS_EN, jalaliMonthLength, toJalali } from '../lib/jalali';
+import { eventsOn, HIJRI_MONTHS_EN, HIJRI_MONTHS_FA, toHijri, type CalEvent } from '../lib/events';
+import { fromJalali, JALALI_MONTHS, JALALI_MONTHS_EN, jalaliMonthLength, toJalali } from '../lib/jalali';
 import { nf } from '../lib/i18n';
 import { dayKey, occurrences } from '../lib/recur';
 import { remindersChanged } from '../lib/reminderEngine';
@@ -30,6 +32,7 @@ export function Calendar({ active }: { active: boolean }) {
   const [places, setPlaces] = useState<SavedPlace[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [quick, setQuick] = useState(false);
+  useBack(() => (active && editing ? (setEditing(null), true) : false));
 
   const load = () => {
     void api.reminders().then(setReminders);
@@ -91,9 +94,12 @@ export function Calendar({ active }: { active: boolean }) {
       repeat: { freq: 'none' }, alerts: [0, 15], place: null, task_id: null, done: false,
     });
 
+  const monthEvents = useMemo(() => new Map(month.days.map((d) => [d.getTime(), eventsOn(d)] as const)), [month]);
   const agenda = byDay.get(dayKey(selected)) ?? [];
   const today = new Date();
-  const selHoliday = holidayOf(selected);
+  const selEvents = eventsOn(selected);
+  const selH = toHijri(selected);
+  const selHText = selH ? `${nf(lang, selH.hd)} ${(lang === 'fa' ? HIJRI_MONTHS_FA : HIJRI_MONTHS_EN)[selH.hm - 1]} ${lang === "fa" ? selH.hy.toLocaleString("fa-IR", { useGrouping: false }) : selH.hy}` : '';
   const selTitle = selected.toLocaleDateString(lang === 'fa' ? 'fa-IR' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
   const selJ = toJalali(selected);
   const selJText = lang === 'fa' ? '' : `${selJ.jd} ${JALALI_MONTHS_EN[selJ.jm - 1]} ${selJ.jy}`;
@@ -120,12 +126,15 @@ export function Calendar({ active }: { active: boolean }) {
           {Array.from({ length: lead }, (_, i) => <div key={`l${i}`} className="cal-pad" />)}
           {month.days.map((d) => {
             const items = byDay.get(dayKey(d)) ?? [];
-            const hol = holidayOf(d);
-            const cls = ['cal-day', d.getDay() === 5 || hol ? 'off' : '', sameDay(d, today) ? 'today' : '', sameDay(d, selected) ? 'sel' : ''].join(' ');
+            const evs = monthEvents.get(d.getTime()) ?? [];
+            const hol = evs.some((e) => e.kind === 'holiday');
+            const occ = evs.some((e) => e.kind === 'occasion');
+            const cls = ['cal-day', d.getDay() === 5 || hol ? 'off' : '', hol ? 'hol' : '', sameDay(d, today) ? 'today' : '', sameDay(d, selected) ? 'sel' : ''].join(' ');
             return (
-              <button key={d.getTime()} type="button" className={cls} onClick={() => { setSelected(d); setEditing(null); }} aria-label={d.toDateString()} aria-pressed={sameDay(d, selected)}>
+              <button key={d.getTime()} type="button" className={cls} onClick={() => { setSelected(d); setEditing(null); }} aria-label={[d.toDateString(), ...evs.map((e) => (lang === 'fa' ? e.fa : e.en))].join(', ')} aria-pressed={sameDay(d, selected)}>
                 <span className="num cal-n">{primary(d)}</span>
                 <span className="cal-s">{secondary(d)}</span>
+                {evs.length > 0 && !hol && <i className={occ ? 'cal-ev occ' : 'cal-ev world'} aria-hidden />}
                 {items.length > 0 && <span className="cal-dots" aria-hidden>{items.slice(0, 3).map((x, i) => <i key={i} className={x.r.place ? 'geo' : ''} />)}</span>}
               </button>
             );
@@ -146,13 +155,18 @@ export function Calendar({ active }: { active: boolean }) {
           <div className="agenda-head">
             <div>
               <h2>{selTitle}</h2>
-              <p className="muted small">{selJText}{selHoliday ? ` · ${lang === 'fa' ? selHoliday[1] : selHoliday[0]}` : ''}</p>
+              <p className="muted small">{[selJText, selHText].filter(Boolean).join(' · ')}</p>
             </div>
             <div className="agenda-btns">
               <button type="button" className="btn primary" onClick={() => setQuick(true)}><Zap aria-hidden /> {t('quickAdd')}</button>
               <button type="button" className="btn" onClick={startNew}><Plus aria-hidden /> {t('newReminder')}</button>
             </div>
           </div>
+          {selEvents.length > 0 && (
+            <ul className="plain day-events" aria-label={t('dayEvents')}>
+              {selEvents.map((e, i) => <EventRow key={i} e={e} />)}
+            </ul>
+          )}
           {agenda.length === 0 ? (
             <p className="muted">{t('noReminders')}</p>
           ) : (
@@ -349,5 +363,15 @@ function ReminderEditor({ value, places, tasks, onCancel, onSaved }: {
         </div>
       </form>
     </section>
+  );
+}
+
+function EventRow({ e }: { e: CalEvent }) {
+  const { t, lang } = useApp();
+  return (
+    <li className={`ev-row ${e.kind}`}>
+      <span className="ev-chip">{t(e.kind === 'holiday' ? 'evHoliday' : e.kind === 'occasion' ? 'evOccasion' : 'evWorld')}</span>
+      <span className="ev-name" lang={lang}>{lang === 'fa' ? e.fa : e.en}</span>
+    </li>
   );
 }

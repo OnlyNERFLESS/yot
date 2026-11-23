@@ -45,7 +45,7 @@ The maps, routing, search and metro are built in, so there is nothing to set up.
 
 **Reminders, calendar and tasks**
 - Reminders with repeats (daily, weekly, monthly), multiple alerts, snooze, and place reminders that fire when you arrive.
-- Calendar with Gregorian and Jalali (Persian) dates side by side.
+- Calendar with Gregorian and Jalali (Persian) dates side by side, with every Iranian holiday (lunar ones on Iran's official, crescent-sighted dates), Iranian occasions and world days.
 - **Quick add**: type a list, one item per line ("Call supplier tomorrow 3pm", "Site visit every Monday 9", "!Pay invoice Friday"), see a live preview, save them all at once. Understands English and Persian dates and times.
 - Home screen "today at a glance": day progress, timeline of today's reminders, anytime tasks, and the rest of the week.
 - Five built-in notification tones, one Android notification channel each.
@@ -123,6 +123,8 @@ See [DEPLOY.md](DEPLOY.md) for versioning, bundling the maps (`-f bundled-packs`
 Neshan keys are optional and only needed for live traffic. They are read from `.env.local` at build time and never committed. Anything compiled into an app can be extracted from it, so restrict your keys to your own package name in the Neshan panel.
 
 ## Data and attribution
+
+Calendar events from [persian-holidays](https://github.com/karfekr/persian-holidays) (MIT); Iran's official holidays and Hijri months from [iran-holidays](https://www.npmjs.com/package/iran-holidays) (ISC), which follows time.ir.
 
 Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, available under the Open Database License. Basemap tiles and style by [Protomaps](https://protomaps.com). Live traffic by [Neshan](https://platform.neshan.org).
 

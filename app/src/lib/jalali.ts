@@ -89,16 +89,3 @@ export function jalaliMonthLength(jy: number, jm: number): number {
 
 export const JALALI_MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
 export const JALALI_MONTHS_EN = ['Farvardin', 'Ordibehesht', 'Khordad', 'Tir', 'Mordad', 'Shahrivar', 'Mehr', 'Aban', 'Azar', 'Dey', 'Bahman', 'Esfand'];
-
-/** Iran's fixed solar public holidays (the lunar religious ones move each year and are not included). */
-const SOLAR_HOLIDAYS: Record<string, [string, string]> = {
-  '1-1': ['Nowruz', 'نوروز'], '1-2': ['Nowruz', 'نوروز'], '1-3': ['Nowruz', 'نوروز'], '1-4': ['Nowruz', 'نوروز'],
-  '1-12': ['Islamic Republic Day', 'روز جمهوری اسلامی'], '1-13': ['Nature Day', 'روز طبیعت'],
-  '3-14': ['Khomeini anniversary', 'رحلت امام خمینی'], '3-15': ['15 Khordad uprising', 'قیام ۱۵ خرداد'],
-  '11-22': ['Revolution Day', 'پیروزی انقلاب'], '12-29': ['Oil Nationalisation Day', 'ملی شدن صنعت نفت'],
-};
-
-export function holidayOf(d: Date): [string, string] | null {
-  const j = toJalali(d);
-  return SOLAR_HOLIDAYS[`${j.jm}-${j.jd}`] ?? null;
-}

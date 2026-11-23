@@ -4,6 +4,11 @@ import type { Modifier, Step } from './api';
 export type Lang = 'en' | 'fa';
 
 const en = {
+  evHoliday: 'Holiday',
+  evOccasion: 'Occasion',
+  evWorld: 'World day',
+  dayEvents: 'Events on this day',
+  backToExit: 'Press back again to exit',
   recentSearches: 'Recent searches',
   recentEmpty: 'Places you search for show up here.',
   lastSearch: 'Last search',
@@ -311,6 +316,11 @@ const en = {
 export type Key = keyof typeof en;
 
 const fa: Record<Key, string> = {
+  evHoliday: 'تعطیل',
+  evOccasion: 'مناسبت',
+  evWorld: 'روز جهانی',
+  dayEvents: 'مناسبت‌های این روز',
+  backToExit: 'برای خروج دوباره «بازگشت» را بزنید',
   recentSearches: 'جستجوهای اخیر',
   recentEmpty: 'جاهایی که جستجو می‌کنید اینجا نشان داده می‌شوند.',
   lastSearch: 'آخرین جستجو',

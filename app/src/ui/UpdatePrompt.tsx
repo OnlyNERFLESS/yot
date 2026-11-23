@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Download, Sparkles, X } from 'lucide-react';
 import { useApp } from '../app/ctx';
 import { isMobile } from '../lib/location';
+import { useBack } from '../lib/back';
 import { findUpdate, installUpdate, skippedVersion, skipVersion, type Update } from '../lib/updates';
 
 const EVENT = 'yot:update';
@@ -38,6 +39,9 @@ export function UpdatePrompt() {
     }, 2500);
     return () => window.clearTimeout(id);
   }, [online]);
+
+  // Back closes the popup, but never while the download is running.
+  useBack(() => (u ? (stage !== 'working' && setU(null), true) : false));
 
   if (!u) return null;
   const later = () => {

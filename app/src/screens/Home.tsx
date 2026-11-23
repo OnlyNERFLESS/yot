@@ -7,6 +7,7 @@ import { useApp } from '../app/ctx';
 import { api, type PackInfo, type Reminder, type Repeat, type Task } from '../lib/api';
 import { recentList, type Recent } from '../lib/recent';
 import { JALALI_MONTHS, JALALI_MONTHS_EN, toJalali } from '../lib/jalali';
+import { eventsOn } from '../lib/events';
 import { occurrences } from '../lib/recur';
 import { QuickAdd } from '../ui/QuickAdd';
 import { fmtDuration, kindLabel, nf } from '../lib/i18n';
@@ -101,6 +102,8 @@ export function Home({ active }: { active: boolean }) {
 
   // The date block: the day large, the other calendar underneath.
   const j = toJalali(nowD);
+  // The day's holiday, else its first Iranian occasion; world days stay on the calendar.
+  const todayEv = eventsOn(nowD).find((e) => e.kind !== 'world') ?? null;
   const jYear = j.jy.toLocaleString(lang === 'fa' ? 'fa-IR' : 'en-GB', { useGrouping: false });
   const jText = lang === 'fa'
     ? `${nf(lang, j.jd)} ${JALALI_MONTHS[j.jm - 1]} ${jYear}`
@@ -156,6 +159,7 @@ export function Home({ active }: { active: boolean }) {
             <b>{nowD.toLocaleDateString(loc, { weekday: 'long' })}</b>
             <span>{bigMonth}</span>
             <span className="th-alt" dir={lang === 'fa' ? 'ltr' : undefined}>{alt}</span>
+            {todayEv && <span className={`th-ev ${todayEv.kind}`}>{lang === 'fa' ? todayEv.fa : todayEv.en}</span>}
           </div>
         </div>
 

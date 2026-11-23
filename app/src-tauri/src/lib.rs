@@ -358,6 +358,12 @@ async fn update_install(app: tauri::AppHandle, url: String) -> R<()> {
     }
 }
 
+/// Android Back on Home, pressed twice: leave the app.
+#[tauri::command]
+fn app_quit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 /// Opens the OS page where location access is switched on. Windows only: on
 /// Android the app asks for the permission itself.
 #[tauri::command]
@@ -771,6 +777,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             sound_file,
             open_location_settings,
+            app_quit,
             update_install,
             route_explore,
             packs_list,
