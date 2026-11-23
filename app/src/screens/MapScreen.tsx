@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, type PointerE
 import type { Map as MlMap, MapGeoJSONFeature } from 'maplibre-gl';
 import {
   ArrowLeftRight, Footprints as WalkIcon,
-  ArrowLeft, Banknote, BedDouble, Bike, Bookmark, Box, Car, Check, CircleCheck, CircleDot, Clock, Coffee, Compass, Ellipsis, Flag,
+  ArrowLeft, Banknote, BedDouble, Bike, Bookmark, Box, Car, Check, CircleCheck, Clock, History, Coffee, Compass, Ellipsis, Flag,
   Footprints, Fuel, Globe, Hospital, Landmark, Layers, LayoutGrid, LocateFixed, MapPin, Navigation, Phone, Pill, Satellite,
   Search, Share2, ShoppingCart, SquareParking, TrafficCone, TrainFront, Utensils, Users, X, type LucideIcon,
 } from 'lucide-react';
@@ -18,6 +18,7 @@ import {
   set3dVisible, setBasemapHidden, setData, setGoogleBase, setMetroVisible, setTrafficVisible, type BasePacks,
 } from '../map/setup';
 import { TurnIcon } from '../ui/TurnIcon';
+import { addRecent, clearRecent, onRecentChange, recentList, type Recent } from '../lib/recent';
 import { DriverView, type DriverTarget } from '../ui/DriverView';
 import { startRouteScan } from '../map/routeScan';
 import { buildNetwork, type Journey, type Network, type Station } from '../lib/metro';
@@ -152,9 +153,8 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   const [b3d, setB3d] = useState(true);
   const [googleUrl, setGoogleUrl] = useState<{ kind: 'roadmap' | 'satellite'; url: string } | null>(null);
 
-  const [trackId, setTrackId] = useState<number | null>(null);
-  const [trackLine, setTrackLine] = useState<LngLat[]>([]);
-  const lastTrackPt = useRef<{ at: LngLat; t: number } | null>(null);
+  const [recent, setRecent] = useState<Recent[]>(recentList);
+  useEffect(() => onRecentChange(() => setRecent(recentList())), []);
 
   const [snap, setSnap] = useState<Snap>('peek');
   const [pickMode, setPickMode] = useState<'from' | 'to' | null>(null);
@@ -341,20 +341,15 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
-    setData(map, 'tb-track', fc(trackLine.length > 1 ? [line(trackLine)] : []));
-  }, [trackLine, ready]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !ready) return;
     const pins = [
       ...(nav || (to && !pickMode) ? [] : hits.map((h) => point([h.lon, h.lat], { role: 'hit' }))),
-      ...(from ? [point(from.at, { role: 'from' })] : []),
-      ...(to ? [point(to.at, { role: 'to' })] : []),
-      ...(card && !to ? [point(card.at, { role: 'to' })] : []),
+      // While an end is being chosen, the centre pin is its only mark.
+      ...(from && pickMode !== 'from' ? [point(from.at, { role: 'from' })] : []),
+      ...(to && pickMode !== 'to' ? [point(to.at, { role: 'to' })] : []),
+      ...(card && !to && !pickMode ? [point(card.at, { role: 'to' })] : []),
     ];
     setData(map, 'tb-pins', fc(pins));
-  }, [hits, from, to, card, nav, ready]);
+  }, [hits, from, to, card, nav, ready, pickMode]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -556,6 +551,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   };
 
   const chooseHit = (h: Hit) => {
+    addRecent({ name: h.name, name_en: h.name_en, kind: h.kind, lon: h.lon, lat: h.lat });
     if (pickMode) {
       const place: Place = { at: [h.lon, h.lat], label: nameOf(h), fa: [h.name || h.name_en, h.address].filter(Boolean).join('، ') };
       if (pickMode === 'from') setFrom(place);
@@ -576,7 +572,6 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     setCard(null);
     setArrived(null);
     setSnap('half');
-    if (!here && !from) beginPick('from');
   };
 
   const showDriverFor = (c: { fa: string; faLine: string; en: string; at: LngLat }) =>
@@ -747,26 +742,6 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   }, [nav, to, fix, prog, offer, settings, mode]);
 
   // ---------- trip recording ----------
-  useEffect(() => {
-    if (trackId === null || !fix || fix.accuracy > 50) return;
-    const at: LngLat = [fix.lng, fix.lat];
-    const last = lastTrackPt.current;
-    if (last && distM(last.at, at) < 8 && fix.t - last.t < 20_000) return;
-    lastTrackPt.current = { at, t: fix.t };
-    setTrackLine((l) => [...l, at]);
-    void api.trackPoint(trackId, { lat: fix.lat, lon: fix.lng, t: Math.round(fix.t), speed: fix.speed, accuracy: fix.accuracy });
-  }, [fix, trackId]);
-
-  const toggleRecord = async () => {
-    if (trackId !== null) {
-      await api.trackStop(trackId);
-      setTrackId(null);
-      lastTrackPt.current = null;
-      return;
-    }
-    setTrackLine([]);
-    setTrackId(await api.trackStart(''));
-  };
 
   useEffect(() => {
     if (!intent || !ready) return;
@@ -774,14 +749,6 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     if (intent.kind === 'place') {
       openCard({ at: intent.at, name: intent.label, nameAlt: '', fa: intent.label, faLine: '', en: intent.label, kind: '', hit: null, pin: true });
       mapRef.current?.flyTo({ center: intent.at, zoom: 15.5, duration: ms(600) });
-    }
-    if (intent.kind === 'record' && trackId === null) void toggleRecord();
-    if (intent.kind === 'track') {
-      void api.trackPoints(intent.id).then((pts) => {
-        const coords = pts.map((p) => [p.lon, p.lat] as LngLat);
-        setTrackLine(coords);
-        if (coords.length) mapRef.current?.fitBounds(bbox(coords), { padding: 60 });
-      });
     }
     clearIntent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1027,7 +994,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
           <div className="endpoints">
             <button type="button" className="ep" onClick={() => beginPick('from')} title={t('chooseOnMap')}>
               <i className="dot from" aria-hidden />
-              <span>{from ? from.label : here ? t('myLocation') : t('tapToSetStart')}</span>
+              <span>{from ? from.label : t('myLocation')}</span>
               <MapPin aria-hidden className="ep-pick" />
             </button>
             <button type="button" className="ep" onClick={() => beginPick('to')} title={t('chooseOnMap')}>
@@ -1066,6 +1033,16 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
           </ul>
         )}
         {noteView}
+        {!origin && (
+          <div className="wait-loc">
+            {locErr ? (
+              <button type="button" className="btn" onClick={() => setLocAsk(true)}><LocateFixed aria-hidden /> {t('locAskTitle')}</button>
+            ) : (
+              <p className="muted"><LocateFixed aria-hidden className="inline" /> {t('locatingHint')}</p>
+            )}
+            <p className="muted small">{t('orChooseStart')}</p>
+          </div>
+        )}
         {origin && (
           <div className="sh-actions">
             <button type="button" className="btn primary lg go" disabled={!route} onClick={startNav}><Navigation aria-hidden /> {t('start')}</button>
@@ -1303,10 +1280,32 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
           )}
           {noPack && <span className="warn">{t('noPacks')}</span>}
         </p>
-        <button type="button" className={trackId !== null ? 'btn rec-btn is-rec' : 'btn rec-btn'} onClick={() => void toggleRecord()} aria-pressed={trackId !== null}>
-          <CircleDot aria-hidden />
-          {trackId !== null ? `${t('recording')}${sep(lang)}${fmtDistance(lang, trackDistance(trackLine))}` : t('quickRecord')}
-        </button>
+        <div className="recent">
+          <div className="recent-head">
+            <p className="sh-title"><History aria-hidden className="inline" /> {t('recentSearches')}</p>
+            {recent.length > 0 && <button type="button" className="btn ghost sm" onClick={clearRecent}>{t('clear')}</button>}
+          </div>
+          {recent.length === 0 ? (
+            <p className="muted small">{t('recentEmpty')}</p>
+          ) : (
+            <ul className="hits recent-list">
+              {recent.slice(0, 5).map((r) => {
+                const at: LngLat = [r.lon, r.lat];
+                return (
+                  <li key={`${r.name}-${r.t}`}>
+                    <button type="button" onClick={() => { void tapPlace(r.name, r.name_en, r.kind, at); mapRef.current?.flyTo({ center: at, zoom: Math.max(mapRef.current.getZoom(), 15.5), duration: ms(600) }); }}>
+                      <span className="hit-name">{nameOf(r)}</span>
+                      <span className="hit-meta">
+                        {kindLabel(lang, r.kind)}
+                        {here && <>{sep(lang)}<span className="num">{fmtDistance(lang, distM(here, at))}</span></>}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
         {noteView}
       </div>
     );
@@ -1338,7 +1337,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
         <div className="topbar">
           <div className="searchpill">
             <Search aria-hidden />
-            <input id="map-search" type="search" value={query} placeholder={t(pickMode === 'from' ? 'searchStart' : pickMode === 'to' ? 'searchEnd' : 'searchPlaceholder')} onChange={(e) => setQuery(e.target.value)} autoComplete="off" aria-label={t('searchPlaceholder')} />
+            <input id="map-search" type="search" value={query} placeholder={t(pickMode === 'from' ? 'searchStart' : pickMode === 'to' ? 'searchEnd' : 'searchPlaceholder')} onChange={(e) => setQuery(e.target.value)} onFocus={() => { if (!query && !to && !card && !pickMode && !catsOpen) setSnap('half'); }} autoComplete="off" aria-label={t('searchPlaceholder')} />
             {(query || to || hits.length > 0 || card) && (
               <button type="button" className="icon-btn" onClick={clearAll} aria-label={t('clear')}><X aria-hidden /></button>
             )}
@@ -1389,7 +1388,6 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
         )}
       </div>
 
-      {trackId !== null && !nav && <span className="rec-badge"><i aria-hidden />REC</span>}
 
       {pickMode && !pickSearch && !nav && <div className="pick-pin" aria-hidden><MapPin /></div>}
 
@@ -1470,11 +1468,6 @@ function cleanName(n: string): string {
   return n.replace(/\s*metro station$/i, '').replace(/^ایستگاه\s+(مترو\s+)?/, '').trim();
 }
 
-function trackDistance(c: LngLat[]): number {
-  let m = 0;
-  for (let i = 1; i < c.length; i++) m += distM(c[i - 1], c[i]);
-  return m;
-}
 
 function fmtLL(p: LngLat): string {
   return `${p[1].toFixed(5)}, ${p[0].toFixed(5)}`;

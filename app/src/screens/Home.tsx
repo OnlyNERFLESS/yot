@@ -1,14 +1,15 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import {
-  AlertTriangle, Bell, CalendarCheck2, CalendarClock, Check, ChevronRight, Circle, CircleDot, Clock3, Flag, ListChecks,
-  Map as MapIcon, MapPin, Navigation, Repeat as RepeatIcon, Route, Sun, TrainFront, Zap, type LucideIcon,
+  AlertTriangle, Bell, CalendarCheck2, CalendarClock, Check, ChevronRight, Circle, Clock3, History, Flag, ListChecks,
+  Map as MapIcon, MapPin, Navigation, Repeat as RepeatIcon, Sun, TrainFront, Zap, type LucideIcon,
 } from 'lucide-react';
 import { useApp } from '../app/ctx';
-import { api, type PackInfo, type Reminder, type Repeat, type Task, type Track } from '../lib/api';
+import { api, type PackInfo, type Reminder, type Repeat, type Task } from '../lib/api';
+import { recentList, type Recent } from '../lib/recent';
 import { JALALI_MONTHS, JALALI_MONTHS_EN, toJalali } from '../lib/jalali';
 import { occurrences } from '../lib/recur';
 import { QuickAdd } from '../ui/QuickAdd';
-import { fmtDateTime, fmtDistance, fmtDuration, nf, sep } from '../lib/i18n';
+import { fmtDuration, kindLabel, nf } from '../lib/i18n';
 
 export function today(): string {
   const d = new Date();
@@ -32,7 +33,7 @@ interface Occ {
 export function Home({ active }: { active: boolean }) {
   const { t, lang, online, go } = useApp();
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [trip, setTrip] = useState<Track | null>(null);
+  const [last, setLast] = useState<Recent | null>(() => recentList()[0] ?? null);
   const [packs, setPacks] = useState<PackInfo[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [quick, setQuick] = useState(false);
@@ -44,8 +45,7 @@ export function Home({ active }: { active: boolean }) {
   useEffect(() => {
     if (!active) return;
     loadTasks();
-    // A trip under 20 m is a test tap, not a journey worth showing.
-    void api.tracks().then((ts) => setTrip(ts.find((x) => x.ended_at && x.distance_m >= 20) ?? null));
+    setLast(recentList()[0] ?? null);
     void api.packs().then(setPacks);
     loadReminders();
     setNow(Date.now());
@@ -194,7 +194,7 @@ export function Home({ active }: { active: boolean }) {
         <button type="button" className="btn primary" onClick={() => setQuick(true)}><Zap aria-hidden /> {t('quickAdd')}</button>
         <button type="button" className="btn" onClick={() => go('map', { kind: 'navigate' })}><Navigation aria-hidden /> {t('quickNavigate')}</button>
         <button type="button" className="btn" onClick={() => go('metro')}><TrainFront aria-hidden /> {t('navMetro')}</button>
-        <button type="button" className="btn" onClick={() => go('map', { kind: 'record' })}><CircleDot aria-hidden /> {t('quickRecord')}</button>
+        <button type="button" className="btn" onClick={() => go('map')}><History aria-hidden /> {t('recentSearches')}</button>
       </div>
       <QuickAdd open={quick} kind="reminder" defaultDate={d} onClose={() => setQuick(false)} onSaved={() => { loadReminders(); loadTasks(); }} />
 
@@ -284,19 +284,16 @@ export function Home({ active }: { active: boolean }) {
       {/* ---- Trips and offline maps, side by side ---- */}
       <div className="mini-tiles">
         <section className="card mini">
-          <span className="mini-icon" aria-hidden><Route /></span>
+          <span className="mini-icon" aria-hidden><History /></span>
           <div>
-            <h2>{t('lastTrip')}</h2>
-            {trip ? (
-              <button type="button" className="link-row" onClick={() => go('map', { kind: 'track', id: trip.id })}>
-                <span className="num">{fmtDateTime(lang, trip.started_at)}</span>
-                <span className="muted">
-                  <span className="num">{fmtDistance(lang, trip.distance_m)}</span>
-                  {trip.ended_at ? <>{sep(lang)}<span className="num">{fmtDuration(lang, (trip.ended_at - trip.started_at) / 1000)}</span></> : ''}
-                </span>
+            <h2>{t('lastSearch')}</h2>
+            {last ? (
+              <button type="button" className="link-row" onClick={() => go('map', { kind: 'place', at: [last.lon, last.lat], label: lang === 'en' ? last.name_en || last.name : last.name })}>
+                <span>{lang === 'en' ? last.name_en || last.name : last.name}</span>
+                <span className="muted">{kindLabel(lang, last.kind)}</span>
               </button>
             ) : (
-              <p className="muted">{t('noTrips')}</p>
+              <p className="muted">{t('recentEmpty')}</p>
             )}
           </div>
         </section>

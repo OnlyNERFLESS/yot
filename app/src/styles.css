@@ -1580,3 +1580,11 @@ input[type='checkbox']:checked { background: var(--accent); border-color: var(--
 @keyframes upd-spin { to { transform: rotate(360deg); } }
 .about-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .about-row p { margin: 0; }
+
+/* ---------- Recent searches (replaces trip recording) ---------- */
+.sh-idle .recent { grid-column: 1 / -1; display: grid; gap: 6px; }
+.recent-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.recent-head .sh-title { margin: 0; display: inline-flex; align-items: center; gap: 8px; }
+.recent-list { margin: 0; }
+.wait-loc { display: grid; gap: 6px; justify-items: start; }
+.wait-loc p { margin: 0; }

@@ -191,10 +191,10 @@ export function startRouteScan(map: MlMap, from: LngLat, to: LngLat, mode: Mode,
     const g0 = ['interpolate', ['linear'], ['line-progress'], 0, CLEAR, 1, CLEAR];
     if (!map.getLayer(WIN + '-glow'))
       map.addLayer({ id: WIN + '-glow', type: 'line', source: WIN, layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-width': 26, 'line-blur': 14, 'line-gradient': g0 } } as LineLayerSpecification, before);
+        paint: { 'line-width': 18, 'line-blur': 10, 'line-gradient': g0 } } as LineLayerSpecification, before);
     if (!map.getLayer(WIN))
       map.addLayer({ id: WIN, type: 'line', source: WIN, layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-width': 7, 'line-gradient': g0 } } as LineLayerSpecification, before);
+        paint: { 'line-width': 4.5, 'line-gradient': g0 } } as LineLayerSpecification, before);
   };
   // Deep emerald at the start running to bright green at the leading end, so
   // the line reads as travelling; the halo follows the same ramp.

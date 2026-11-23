@@ -4,6 +4,10 @@ import type { Modifier, Step } from './api';
 export type Lang = 'en' | 'fa';
 
 const en = {
+  recentSearches: 'Recent searches',
+  recentEmpty: 'Places you search for show up here.',
+  lastSearch: 'Last search',
+  orChooseStart: 'Or tap My location above to start from another place.',
   updTitle: 'Update available',
   updYouHave: 'You have {v}',
   updWhatsNew: 'What\'s new',
@@ -307,6 +311,10 @@ const en = {
 export type Key = keyof typeof en;
 
 const fa: Record<Key, string> = {
+  recentSearches: 'جستجوهای اخیر',
+  recentEmpty: 'جاهایی که جستجو می‌کنید اینجا نشان داده می‌شوند.',
+  lastSearch: 'آخرین جستجو',
+  orChooseStart: 'یا برای شروع از جای دیگر، روی «مکان من» در بالا بزنید.',
   updTitle: 'نسخهٔ جدید آماده است',
   updYouHave: 'نسخهٔ شما {v}',
   updWhatsNew: 'تازه‌ها',

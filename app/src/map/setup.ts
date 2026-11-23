@@ -304,18 +304,16 @@ export function addOverlays(map: MlMap) {
   const src = (id: string) => {
     if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data: EMPTY });
   };
-  ['tb-alts', 'tb-route', 'tb-track', 'tb-pos', 'tb-pins'].forEach(src);
+  ['tb-alts', 'tb-route', 'tb-pos', 'tb-pins'].forEach(src);
   const add = (l: maplibregl.LayerSpecification) => {
     if (!map.getLayer(l.id)) map.addLayer(l);
   };
   add({ id: 'tb-alts', type: 'line', source: 'tb-alts', layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': '#7d8c83', 'line-width': 6, 'line-opacity': 0.75 } });
+    paint: { 'line-color': '#7d8c83', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2.5, 14, 4, 17, 5.5], 'line-opacity': 0.75 } });
   add({ id: 'tb-route-casing', type: 'line', source: 'tb-route', layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': '#022c16', 'line-width': 11 } });
+    paint: { 'line-color': '#022c16', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 14, 7.5, 17, 10] } });
   add({ id: 'tb-route', type: 'line', source: 'tb-route', layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': '#16db65', 'line-width': 7 } });
-  add({ id: 'tb-track', type: 'line', source: 'tb-track', layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': '#f5b544', 'line-width': 4, 'line-dasharray': [1, 1.5] } });
+    paint: { 'line-color': '#16db65', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 14, 4.5, 17, 6.5] } });
   add({ id: 'tb-pins', type: 'circle', source: 'tb-pins',
     paint: {
       // Amber belongs to traffic. Places are white pins on a ground-coloured

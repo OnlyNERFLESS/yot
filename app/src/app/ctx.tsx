@@ -7,8 +7,6 @@ export type Screen = 'home' | 'map' | 'metro' | 'calendar' | 'tasks' | 'panel';
 /** A request from one screen to the map, e.g. the dashboard's "Navigate" button. */
 export type MapIntent =
   | { kind: 'navigate' }
-  | { kind: 'record' }
-  | { kind: 'track'; id: number }
   | { kind: 'place'; at: [number, number]; label: string }
   | null;
 

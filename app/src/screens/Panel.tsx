@@ -4,10 +4,10 @@ import { Bell, BellOff, Check, Play, RefreshCw } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { findUpdate } from '../lib/updates';
 import { showUpdate } from '../ui/UpdatePrompt';
-import { api, RINGTONES, type Mode, type PackInfo, type Ringtone, type SavedPlace, type Track } from '../lib/api';
+import { api, RINGTONES, type Mode, type PackInfo, type Ringtone, type SavedPlace } from '../lib/api';
 import { playTone, remindersChanged } from '../lib/reminderEngine';
 import type { Key } from '../lib/i18n';
-import { fmtDateTime, fmtDistance, nf, sep } from '../lib/i18n';
+import { nf, sep } from '../lib/i18n';
 
 const CHUNK = 4 << 20; // 4 MB per write keeps memory flat on phones
 
@@ -19,7 +19,7 @@ const TONE_NOTES: Record<Ringtone, Key> = {
 };
 
 export function Panel({ active }: { active: boolean }) {
-  const { t, lang, settings, update, go } = useApp();
+  const { t, lang, settings, update } = useApp();
   const [version, setVersion] = useState('');
   const [upd, setUpd] = useState<'idle' | 'checking' | 'latest' | 'failed'>('idle');
   useEffect(() => {
@@ -37,7 +37,6 @@ export function Panel({ active }: { active: boolean }) {
   };
   const [packs, setPacks] = useState<PackInfo[]>([]);
   const [dir, setDir] = useState('');
-  const [tracks, setTracks] = useState<Track[]>([]);
   const [places, setPlaces] = useState<SavedPlace[]>([]);
   const [url, setUrl] = useState('');
   const [dl, setDl] = useState<string | null>(null);
@@ -46,7 +45,6 @@ export function Panel({ active }: { active: boolean }) {
   const load = () => {
     void api.packs().then(setPacks);
     void api.packDir().then(setDir);
-    void api.tracks().then(setTracks);
     void api.places().then(setPlaces);
   };
   useEffect(() => {
@@ -92,10 +90,6 @@ export function Panel({ active }: { active: boolean }) {
     }
   };
 
-  const copyGpx = async (id: number) => {
-    await navigator.clipboard.writeText(await api.trackGpx(id));
-    setMsg(t('copied'));
-  };
 
   return (
     <div className="page" hidden={!active}>
@@ -194,27 +188,6 @@ export function Panel({ active }: { active: boolean }) {
         </form>
       </section>
 
-      <section className="card">
-        <h2>{t('tracks')}</h2>
-        {tracks.length === 0 ? (
-          <p className="muted">{t('none')}</p>
-        ) : (
-          <ul className="plain">
-            {tracks.map((x) => (
-              <li key={x.id} className="between">
-                <button type="button" className="link-row" onClick={() => go('map', { kind: 'track', id: x.id })}>
-                  <span className="num">{fmtDateTime(lang, x.started_at)}</span>
-                  <span className="muted small">{fmtDistance(lang, x.distance_m)}</span>
-                </button>
-                <span className="row tight">
-                  <button type="button" className="small" onClick={() => void copyGpx(x.id)}>{t('copyGpx')}</button>
-                  <button type="button" className="danger small" onClick={() => void api.trackDelete(x.id).then(load)}>{t('delete')}</button>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
 
       <section className="card">
         <h2>{t('savedPlaces')}</h2>
