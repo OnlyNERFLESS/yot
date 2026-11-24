@@ -52,8 +52,9 @@ navigation and place reminders; notifications for reminders.
 ## What still needs the internet
 
 Live traffic and traffic-aware routes (Neshan) and satellite view (Esri
-World Imagery, no key; Google instead when a Google key is set and the device
-is outside Iran). Maps, search, offline routes, metro, reminders and tasks all
+World Imagery, no key, falling back to EOX Sentinel-2 cloudless 2016 when
+Esri refuses the network; Google instead when a Google key is set and the
+device is outside Iran). Maps, search, offline routes, metro, reminders and tasks all
 work with no connection.
 
 Esri's imagery is free for light use; heavy commercial use officially calls

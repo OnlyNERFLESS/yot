@@ -271,18 +271,56 @@ export function setGoogleBase(map: MlMap, tileUrl: string | null) {
 /** Free satellite imagery that needs no key (Esri World Imagery). Google's
  * tiles need a paid key and refuse requests from Iran, so they are only the
  * upgrade, never the only option. */
-export const ESRI_IMAGERY = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-export const ESRI_ATTRIBUTION = 'Imagery © Esri, Maxar, Earthstar Geographics';
+export interface Imagery { url: string; attribution: string; maxzoom: number }
+/** Keyless imagery, best first. Esri is sharp but refuses some networks
+ * (sanctioned countries, Iran included); EOX's Sentinel-2 2016 mosaic is
+ * coarser (about 10 m a pixel, overzoomed past 15) but CC BY and served from
+ * the EU, so it is the fallback when Esri's tiles do not arrive. */
+export const SAT_SOURCES: Imagery[] = [
+  { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: 'Imagery © Esri, Maxar, Earthstar Geographics', maxzoom: 19 },
+  { url: 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg', attribution: 'Sentinel-2 cloudless 2016 by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2016)', maxzoom: 15 },
+];
+
+/** Resolves true once the raster base delivers a tile, false after repeated
+ * tile errors or a quiet timeout: a blocked imagery host otherwise looks
+ * exactly like a button that does nothing. Call before the layer is added.
+ * `host` limits it to that host's tiles: the fallback reuses the layer id, and
+ * late errors from the previous host must not count against the next one. */
+export function probeRaster(map: MlMap, host: string | null, timeoutMs = 7000): Promise<boolean> {
+  return new Promise((resolve) => {
+    let errors = 0;
+    let done = false;
+    const ours = (url: unknown) => !host || (typeof url === 'string' && url.includes(host));
+    const onData = (e: { sourceId?: string; tile?: unknown }) => {
+      const tiles = (map.getSource('google-base') as { tiles?: string[] } | undefined)?.tiles;
+      if (e.sourceId === 'google-base' && e.tile && ours(tiles?.[0])) finish(true);
+    };
+    const onError = (e: { sourceId?: string; error?: { url?: string } }) => {
+      if (e.sourceId === 'google-base' && ours(e.error?.url) && ++errors >= 3) finish(false);
+    };
+    const timer = window.setTimeout(() => finish(false), timeoutMs);
+    function finish(ok: boolean) {
+      if (done) return;
+      done = true;
+      window.clearTimeout(timer);
+      map.off('sourcedata', onData as never);
+      map.off('error', onError as never);
+      resolve(ok);
+    }
+    map.on('sourcedata', onData as never);
+    map.on('error', onError as never);
+  });
+}
 
 /** A raster base under our overlays. `labelsOver` keeps the map's own place
  * and street names drawn on top, which turns bare imagery into a hybrid. The
  * swap itself is instant; the screen's scan transition (MapScreen) hides it. */
-export function setRasterBase(map: MlMap, tileUrl: string | null, attribution: string, labelsOver: boolean) {
+export function setRasterBase(map: MlMap, tileUrl: string | null, attribution: string, labelsOver: boolean, maxzoom = 19) {
   if (map.getLayer('google-base')) map.removeLayer('google-base');
   if (map.getSource('google-base')) map.removeSource('google-base');
   setLabelsOnImagery(map, !!tileUrl && labelsOver);
   if (!tileUrl) return;
-  map.addSource('google-base', { type: 'raster', tiles: [tileUrl], tileSize: 256, maxzoom: 19, attribution });
+  map.addSource('google-base', { type: 'raster', tiles: [tileUrl], tileSize: 256, maxzoom, attribution });
   const layers = map.getStyle().layers;
   // Above every base fill: the city's layers are drawn after the country's,
   // so the imagery goes under the city's first label (or the country's when

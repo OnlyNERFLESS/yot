@@ -14,8 +14,8 @@ import { distM, isOffRoute, pointAlong, prepare, progress, type Prepared, type P
 import { findRoutes } from '../lib/routing';
 import { googleTiles, inIran } from '../lib/online';
 import {
-  add3dBuildings, addMetro, addOverlays, addTraffic, baseStyle, createMap, ESRI_ATTRIBUTION, ESRI_IMAGERY, fc, forgetBasemapState,
-  line, point, registerPack, set3dVisible, setBasemapHidden, setData, setGoogleBase, setMetroVisible, setRasterBase,
+  add3dBuildings, addMetro, addOverlays, addTraffic, baseStyle, createMap, fc, forgetBasemapState,
+  line, point, registerPack, set3dVisible, setBasemapHidden, setData, setGoogleBase, setMetroVisible, probeRaster, SAT_SOURCES, setRasterBase,
   setTrafficVisible, type BasePacks,
 } from '../map/setup';
 import { TurnIcon } from '../ui/TurnIcon';
@@ -160,6 +160,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   const [layersOpen, setLayersOpen] = useState(false);
   const [traffic, setTraffic] = useState(true);
   const [satellite, setSatellite] = useState(false);
+  const [satSrc, setSatSrc] = useState(0);
   const [b3d, setB3d] = useState(true);
   const [googleUrl, setGoogleUrl] = useState<{ kind: 'roadmap' | 'satellite'; url: string } | null>(null);
 
@@ -463,9 +464,10 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       return;
     }
     // No usable Google key (none set, or inside Iran where Google refuses):
-    // satellite comes from Esri's free imagery with our labels over it.
+    // satellite comes from free keyless imagery with our labels over it.
     if (want === 'satellite' && !googleOk) {
-      setRasterBase(map, ESRI_IMAGERY, ESRI_ATTRIBUTION, true);
+      const src = SAT_SOURCES[satSrc];
+      setRasterBase(map, src.url, src.attribution, true, src.maxzoom);
       return;
     }
     if (googleUrl?.kind === want) {
@@ -482,7 +484,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [satellite, route, googleUrl, ready, lang, styleGen, googleOk]);
+  }, [satellite, route, googleUrl, ready, lang, styleGen, googleOk, satSrc]);
 
   // ---------- map <-> satellite: a radar sweep ----------
   // The current view freezes as a picture; a radar beam circles the city
@@ -496,6 +498,33 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   const [scanFade, setScanFade] = useState(false); // leaving satellite: crossfade only
   const scanning = useRef(false);
   const TURN_MS = 1300;
+  // Which keyless imagery host works on this connection. Once one fails it
+  // stays skipped for the session, so the next switch goes straight on.
+  const satSrcRef = useRef(0);
+  satSrcRef.current = satSrc;
+  /** Turns satellite on and proves tiles actually arrive, falling back
+   * through SAT_SOURCES; false means no imagery host is reachable. */
+  const loadImagery = async (map: MlMap): Promise<boolean> => {
+    let i = satSrcRef.current;
+    const hostOf = (n: number) => new URL(SAT_SOURCES[n].url.replace(/\{[a-z]\}/g, '0')).host;
+    let probe = probeRaster(map, googleOk ? null : hostOf(i));
+    setSatellite(true);
+    if (googleOk) return probe;
+    while (!(await probe)) {
+      if (++i >= SAT_SOURCES.length) return false;
+      probe = probeRaster(map, hostOf(i));
+      setSatSrc(i);
+    }
+    return true;
+  };
+  const satFailed = () => {
+    setSatellite(false);
+    setNote({ text: t('satelliteBlocked'), kind: 'warn' });
+  };
+  const idleOr = (map: MlMap, ms: number) => new Promise<void>((res) => {
+    const tm = window.setTimeout(res, ms);
+    map.once('idle', () => { window.clearTimeout(tm); res(); });
+  });
   const switchBase = async (sat: boolean) => {
     const map = mapRef.current;
     if (sat === satellite || scanning.current) return;
@@ -508,11 +537,15 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
         frame = null;
       }
     }
-    if (!map || !frame) return setSatellite(sat);
+    if (!map || !frame) {
+      if (!sat || !map) return setSatellite(sat);
+      if (!(await loadImagery(map))) satFailed();
+      return;
+    }
     scanning.current = true;
     setScanFade(!sat);
     setScanImg(frame);
-    setSatellite(sat);
+    if (!sat) setSatellite(false);
     const frameWait = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
     await frameWait();
     await frameWait();
@@ -529,11 +562,12 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       scanning.current = false;
       return;
     }
-    let loaded = false;
-    const ready = new Promise<void>((res) => {
-      const done = () => { loaded = true; res(); };
-      const t = window.setTimeout(done, 4000);
-      map.once('idle', () => { window.clearTimeout(t); done(); });
+    // Tiles must really arrive before anything is revealed; a host that
+    // refuses this network falls through to the next one meanwhile.
+    let result: boolean | null = null;
+    const loading = loadImagery(map).then(async (ok) => {
+      if (ok) await idleOr(map, 2500);
+      result = ok;
     });
     const wrap = scanWrap.current;
     const beam = radarBeam.current;
@@ -547,8 +581,17 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     // Sweep the frozen city until the new view has loaded.
     do {
       await turn();
-    } while (!loaded && scanning.current);
-    await ready;
+    } while (result === null && scanning.current);
+    await loading;
+    if (!result) {
+      // No imagery on this connection: drop the frozen frame (it is the map
+      // itself) and say why, rather than revealing the same map again.
+      await scanWrap.current?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, fill: 'forwards' }).finished.catch(() => undefined);
+      setScanImg(null);
+      scanning.current = false;
+      satFailed();
+      return;
+    }
     // Lock on: the beam fades and the centre flashes...
     const turning = turn();
     wrap?.classList.add('locked');
