@@ -102,8 +102,8 @@ export function Home({ active }: { active: boolean }) {
 
   // The date block: the day large, the other calendar underneath.
   const j = toJalali(nowD);
-  // The day's holiday, else its first Iranian occasion; world days stay on the calendar.
-  const todayEv = eventsOn(nowD).find((e) => e.kind !== 'world') ?? null;
+  // The day's holiday, else its first Iranian occasion.
+  const todayEv = eventsOn(nowD)[0] ?? null;
   const jYear = j.jy.toLocaleString(lang === 'fa' ? 'fa-IR' : 'en-GB', { useGrouping: false });
   const jText = lang === 'fa'
     ? `${nf(lang, j.jd)} ${JALALI_MONTHS[j.jm - 1]} ${jYear}`

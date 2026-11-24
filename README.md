@@ -36,8 +36,12 @@ The maps, routing, search and metro are built in, so there is nothing to set up.
 - Choose a start or destination by search, by moving the map under a pin, or with "Start here" on any place.
 - Offline turn-by-turn routing by car and on foot, computed on the device by a Rust A\* router.
 - A "finding your route" animation: the router's real search is played back as glowing threads spreading along the actual streets until one reaches the destination, then the chosen route draws itself in.
-- Live traffic and traffic-aware routes through Neshan when online; satellite view with an optional Google key.
+- Live traffic and traffic-aware routes through Neshan when online.
+- Satellite view with street names on top, no key needed (Esri imagery; Google imagery with an optional key outside Iran). Switching to it plays a radar sweep over the city.
+- 3D buildings that rise as the map tilts.
 - Driver view with spoken-style turn instructions and a turn icon set.
+- Navigation follows you in a tilted, semi-3D view, heading up, with a 3D arrow on the road and see-through buildings.
+- No GPS yet, or a start picked elsewhere? Start opens a route preview you can play through; real guidance takes over when GPS locks on.
 
 **Metro**
 - Every Tehran metro line and all 136 stations, drawn over a dimmed city underlay.
@@ -45,7 +49,7 @@ The maps, routing, search and metro are built in, so there is nothing to set up.
 
 **Reminders, calendar and tasks**
 - Reminders with repeats (daily, weekly, monthly), multiple alerts, snooze, and place reminders that fire when you arrive.
-- Calendar with Gregorian and Jalali (Persian) dates side by side, with every Iranian holiday (lunar ones on Iran's official, crescent-sighted dates), Iranian occasions and world days.
+- Calendar with Gregorian and Jalali (Persian) dates side by side, with every Iranian holiday (lunar ones on Iran's official, crescent-sighted dates) and Iranian occasions. The Persian calendar shows its numbers, months and events in Persian; the rest of the app keeps your language.
 - **Quick add**: type a list, one item per line ("Call supplier tomorrow 3pm", "Site visit every Monday 9", "!Pay invoice Friday"), see a live preview, save them all at once. Understands English and Persian dates and times.
 - Home screen "today at a glance": day progress, timeline of today's reminders, anytime tasks, and the rest of the week.
 - Five built-in notification tones, one Android notification channel each.

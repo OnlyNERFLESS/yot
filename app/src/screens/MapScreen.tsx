@@ -3,25 +3,27 @@ import type { Map as MlMap, MapGeoJSONFeature } from 'maplibre-gl';
 import {
   ArrowLeftRight, Footprints as WalkIcon,
   ArrowLeft, Banknote, BedDouble, Bike, Bookmark, Box, Car, Check, CircleCheck, Clock, History, Coffee, Compass, Ellipsis, Flag,
-  Footprints, Fuel, Globe, Hospital, Landmark, Layers, LayoutGrid, LocateFixed, MapPin, Navigation, Phone, Pill, Satellite,
+  Footprints, Fuel, Globe, Hospital, Landmark, Layers, LayoutGrid, LocateFixed, MapPin, Navigation, Pause, Phone, Pill, Play, Satellite,
   Search, Share2, ShoppingCart, SquareParking, TrafficCone, TrainFront, Utensils, Users, X, type LucideIcon,
 } from 'lucide-react';
 import { useApp } from '../app/ctx';
 import { api, type Hit, type LngLat, type Mode, type Route } from '../lib/api';
 import { fmtClock, fmtDistance, fmtDuration, humanError, instruction, kindLabel, nf, sep, type Key } from '../lib/i18n';
 import { isMobile, watch, type Fix } from '../lib/location';
-import { distM, isOffRoute, prepare, progress, type Prepared, type Progress } from '../lib/nav';
+import { distM, isOffRoute, pointAlong, prepare, progress, type Prepared, type Progress } from '../lib/nav';
 import { findRoutes } from '../lib/routing';
 import { googleTiles, inIran } from '../lib/online';
 import {
-  add3dBuildings, addMetro, addOverlays, addTraffic, baseStyle, createMap, fc, forgetBasemapState, line, point, registerPack,
-  set3dVisible, setBasemapHidden, setData, setGoogleBase, setMetroVisible, setTrafficVisible, type BasePacks,
+  add3dBuildings, addMetro, addOverlays, addTraffic, baseStyle, createMap, ESRI_ATTRIBUTION, ESRI_IMAGERY, fc, forgetBasemapState,
+  line, point, registerPack, set3dVisible, setBasemapHidden, setData, setGoogleBase, setMetroVisible, setRasterBase,
+  setTrafficVisible, type BasePacks,
 } from '../map/setup';
 import { TurnIcon } from '../ui/TurnIcon';
 import { useBack } from '../lib/back';
 import { addRecent, clearRecent, onRecentChange, recentList, type Recent } from '../lib/recent';
 import { DriverView, type DriverTarget } from '../ui/DriverView';
 import { startRouteScan } from '../map/routeScan';
+import { Puck } from '../map/puck';
 import { buildNetwork, type Journey, type Network, type Station } from '../lib/metro';
 import { fold } from '../lib/fold';
 
@@ -109,8 +111,11 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   const { t, lang, dark, settings, online, intent, clearIntent } = useApp();
   const el = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
+  const puckRef = useRef<Puck | null>(null);
   const packUrl = useRef<BasePacks>({ city: null, country: null });
   const [ready, setReady] = useState(false);
+  // Bumped on every style load: a theme or language swap drops added sources.
+  const [styleGen, setStyleGen] = useState(0);
   const [noPack, setNoPack] = useState(false);
 
   const [fix, setFix] = useState<Fix | null>(null);
@@ -143,7 +148,11 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   const [arrived, setArrived] = useState<Place | null>(null);
 
   const [nav, setNav] = useState<Prepared | null>(null);
-  const [prog, setProg] = useState<Progress | null>(null);
+  // Preview: no GPS yet, or a start chosen somewhere other than here. The
+  // route is driven by a simulated position instead of leaving a blank screen.
+  const [preview, setPreview] = useState(false);
+  const [simAlong, setSimAlong] = useState(0);
+  const [simPlay, setSimPlay] = useState(false);
   const offCount = useRef(0);
   const lastReroute = useRef(0);
   const [offer, setOffer] = useState<{ route: Route; saves: number } | null>(null);
@@ -182,6 +191,15 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   const here: LngLat | null = fix ? [fix.lng, fix.lat] : null;
   const origin: LngLat | null = from?.at ?? here;
   const center = (): LngLat => (mapRef.current ? (mapRef.current.getCenter().toArray() as LngLat) : here ?? TEHRAN);
+  // Google tiles only with a key, online, and outside Iran (Google refuses Iranian networks).
+  const googleOk = settings.has_google_key && online && !inIran(here ?? center());
+  /** Where navigation thinks the agent is: the GPS fix, or the preview's simulated spot. */
+  const pos: Fix | null = useMemo(() => {
+    if (!nav || !preview) return fix;
+    const at = pointAlong(nav, simAlong);
+    return { lng: at[0], lat: at[1], accuracy: 5, speed: simPlay ? simSpeed(nav.route.mode) : 0, heading: routeBearing(nav, simAlong), t: Date.now() };
+  }, [nav, preview, simAlong, simPlay, fix]);
+  const prog: Progress | null = useMemo(() => (nav && pos ? progress(nav, [pos.lng, pos.lat]) : null), [nav, pos]);
   const nameOf = (h: { name: string; name_en: string }) => (lang === 'en' ? h.name_en || h.name : h.name);
   const altOf = (h: { name: string; name_en: string }) => {
     const main = nameOf(h);
@@ -216,6 +234,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       if (cancelled || !el.current) return;
       const map = await createMap({ container: el.current, style: baseStyle(packUrl.current, flavor, lang), center: start, zoom: 11, neshanWebKey: key });
       mapRef.current = map;
+      puckRef.current = new Puck(map);
       const fence = cb ?? b;
       if (fence) {
         const padX = (fence[2] - fence[0]) * 0.15;
@@ -230,8 +249,8 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
         add3dBuildings(map, dark ? 'dark' : 'light');
         addMetro(map, dark ? 'dark' : 'light');
         if (key) addTraffic(map, 'tb-alts');
-        setReady(false);
         setReady(true);
+        setStyleGen((n) => n + 1);
       });
       map.on('dragstart', () => setFollow(false));
       map.on('rotate', () => setBearing(map.getBearing()));
@@ -264,6 +283,8 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     })();
     return () => {
       cancelled = true;
+      puckRef.current?.remove();
+      puckRef.current = null;
       mapRef.current?.remove();
       mapRef.current = null;
     };
@@ -352,21 +373,41 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     setData(map, 'tb-pins', fc(pins));
   }, [hits, from, to, card, nav, ready, pickMode]);
 
+  // Navigation camera: tilted into a semi-3D view, heading up, the car low on
+  // the screen so the road ahead fills it. Linear easing over about one fix
+  // interval makes the camera glide from fix to fix instead of hopping.
+  const lastCam = useRef(0);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || !fix) return;
+    if (!map || !ready) return;
+    if (!pos) {
+      // e.g. a no-GPS preview just ended: nothing to mark.
+      puckRef.current?.set(null, null, 'dot');
+      setData(map, 'tb-pos', fc([]));
+      return;
+    }
+    const at: LngLat = nav && prog && prog.offBy < 30 ? prog.snapped : [pos.lng, pos.lat];
     const draw = () => {
-      const mpp = (156543.03392 * Math.cos((fix.lat * Math.PI) / 180)) / 2 ** map.getZoom();
-      const at: LngLat = nav && prog && prog.offBy < 30 ? prog.snapped : [fix.lng, fix.lat];
-      setData(map, 'tb-pos', fc([point(at, { kind: 'acc', px: Math.min(200, fix.accuracy / mpp) }), point(at, { kind: 'dot' })]));
+      const mpp = (156543.03392 * Math.cos((pos.lat * Math.PI) / 180)) / 2 ** map.getZoom();
+      setData(map, 'tb-pos', fc([point(at, { kind: 'acc', px: Math.min(200, pos.accuracy / mpp) })]));
     };
+    // The marker: an extruded 3D arrow on the road while navigating, else a
+    // dot with a heading cone once the device knows which way it is moving.
+    const heading = nav && prog ? navHeading(nav, prog, pos) : pos.heading !== null && (pos.speed ?? 0) > 1 ? pos.heading : null;
+    puckRef.current?.set(at, heading, nav ? 'nav' : 'dot');
     draw();
     map.on('zoom', draw);
     if (follow) {
-      const at: LngLat = nav && prog && prog.offBy < 30 ? prog.snapped : [fix.lng, fix.lat];
       if (nav && prog) {
-        const heading = fix.heading !== null && (fix.speed ?? 0) > 1.5 ? fix.heading : routeBearing(nav, prog.along);
-        map.easeTo({ center: at, bearing: heading, pitch: 55, zoom: Math.max(map.getZoom(), 16.5), duration: ms(800), offset: [0, map.getContainer().clientHeight * 0.22] });
+        const now = Date.now();
+        const gap = lastCam.current ? Math.min(1200, now - lastCam.current) : 900;
+        lastCam.current = now;
+        const walk = nav.route.mode === 'walk';
+        map.easeTo({
+          center: at, bearing: navHeading(nav, prog, pos), pitch: walk ? 45 : 52,
+          zoom: walk ? 17.6 : 17, duration: ms(gap), easing: (x) => x,
+          offset: [0, map.getContainer().clientHeight * 0.2],
+        });
       } else {
         map.easeTo({ center: at, duration: ms(600), zoom: Math.max(map.getZoom(), 14) });
       }
@@ -374,18 +415,44 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     return () => {
       map.off('zoom', draw);
     };
-  }, [fix, ready, follow, nav, prog]);
+  }, [pos, ready, follow, nav, prog]);
+
+  // Preview drive: a steady simulated position along the route, one step a second.
+  useEffect(() => {
+    if (!nav || !preview || !simPlay) return;
+    const id = window.setInterval(() => setSimAlong((a) => a + simSpeed(nav.route.mode)), 1000);
+    return () => window.clearInterval(id);
+  }, [nav, preview, simPlay]);
+
+  // A preview that was only waiting for GPS hands over the moment a fix arrives.
+  useEffect(() => {
+    if (nav && preview && !from && fix) {
+      setPreview(false);
+      setSimPlay(false);
+    }
+  }, [nav, preview, from, fix]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (map && ready) setTrafficVisible(map, traffic && online && !satellite);
-  }, [traffic, online, satellite, ready]);
+  }, [traffic, online, satellite, ready, styleGen]);
 
-  // Buildings off while driving: towers otherwise stand between the camera and the car.
+  // While driving the buildings stay, but glassy, so the tilted view reads as
+  // a city without a tower ever hiding the route or the car.
   useEffect(() => {
     const map = mapRef.current;
-    if (map && ready) set3dVisible(map, b3d && !satellite && nav === null);
-  }, [b3d, satellite, ready, nav]);
+    if (map && ready) set3dVisible(map, b3d && !satellite, nav !== null);
+  }, [b3d, satellite, ready, nav, styleGen]);
+
+  /** Turning 3D on at a flat, far-out view changes nothing visible, which
+   * reads as broken: tilt and come close enough for the buildings to rise. */
+  const toggle3d = (on: boolean) => {
+    setB3d(on);
+    const map = mapRef.current;
+    if (!map || nav) return;
+    if (on) map.easeTo({ pitch: 55, zoom: Math.max(map.getZoom(), 16), duration: ms(700) });
+    else map.easeTo({ pitch: 0, duration: ms(500) });
+  };
 
   useEffect(() => {
     const map = mapRef.current;
@@ -393,6 +460,12 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     const want: 'roadmap' | 'satellite' | null = satellite ? 'satellite' : route?.provider === 'google' ? 'roadmap' : null;
     if (!want) {
       setGoogleBase(map, null);
+      return;
+    }
+    // No usable Google key (none set, or inside Iran where Google refuses):
+    // satellite comes from Esri's free imagery with our labels over it.
+    if (want === 'satellite' && !googleOk) {
+      setRasterBase(map, ESRI_IMAGERY, ESRI_ATTRIBUTION, true);
       return;
     }
     if (googleUrl?.kind === want) {
@@ -409,7 +482,106 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [satellite, route, googleUrl, ready, lang]);
+  }, [satellite, route, googleUrl, ready, lang, styleGen, googleOk]);
+
+  // ---------- map <-> satellite: a radar sweep ----------
+  // The current view freezes as a picture; a radar beam circles the city
+  // while the new base loads underneath; then the beam locks on and a ping
+  // expands from the centre, opening the new view inside its ring.
+  const scanWrap = useRef<HTMLDivElement>(null);
+  const scanOld = useRef<HTMLDivElement>(null);
+  const radarBeam = useRef<HTMLDivElement>(null);
+  const radarWave = useRef<HTMLDivElement>(null);
+  const [scanImg, setScanImg] = useState<string | null>(null);
+  const [scanFade, setScanFade] = useState(false); // leaving satellite: crossfade only
+  const scanning = useRef(false);
+  const TURN_MS = 1300;
+  const switchBase = async (sat: boolean) => {
+    const map = mapRef.current;
+    if (sat === satellite || scanning.current) return;
+    let frame: string | null = null;
+    if (map && !reducedMotion()) {
+      try {
+        map.redraw();
+        frame = map.getCanvas().toDataURL('image/jpeg', 0.82);
+      } catch {
+        frame = null;
+      }
+    }
+    if (!map || !frame) return setSatellite(sat);
+    scanning.current = true;
+    setScanFade(!sat);
+    setScanImg(frame);
+    setSatellite(sat);
+    const frameWait = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+    await frameWait();
+    await frameWait();
+    // Back to the map: no radar, just a smooth fade from the satellite picture
+    // to the map once it has drawn underneath.
+    if (!sat) {
+      await new Promise<void>((res) => {
+        const t = window.setTimeout(res, 1500);
+        map.once('idle', () => { window.clearTimeout(t); res(); });
+      });
+      await scanOld.current?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 650, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' })
+        .finished.catch(() => undefined);
+      setScanImg(null);
+      scanning.current = false;
+      return;
+    }
+    let loaded = false;
+    const ready = new Promise<void>((res) => {
+      const done = () => { loaded = true; res(); };
+      const t = window.setTimeout(done, 4000);
+      map.once('idle', () => { window.clearTimeout(t); done(); });
+    });
+    const wrap = scanWrap.current;
+    const beam = radarBeam.current;
+    if (wrap && beam) {
+      // The beam must reach every corner from the centre.
+      const r = Math.ceil(Math.hypot(wrap.clientWidth, wrap.clientHeight) / 2) + 4;
+      Object.assign(beam.style, { width: `${2 * r}px`, height: `${2 * r}px`, margin: `${-r}px 0 0 ${-r}px` });
+      wrap.style.setProperty('--ring', `${Math.max(70, Math.round(r / 5))}px`);
+    }
+    const turn = () => beam?.animate([{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }], { duration: TURN_MS, easing: 'linear' }).finished.catch(() => undefined);
+    // Sweep the frozen city until the new view has loaded.
+    do {
+      await turn();
+    } while (!loaded && scanning.current);
+    await ready;
+    // Lock on: the beam fades and the centre flashes...
+    const turning = turn();
+    wrap?.classList.add('locked');
+    const R = wrap ? Math.ceil(Math.hypot(wrap.clientWidth, wrap.clientHeight) / 2) + 80 : 900;
+    wrap?.querySelector('.radar-flash')?.animate(
+      [{ opacity: 0, transform: 'scale(0.4)' }, { opacity: 1, transform: 'scale(1)', offset: 0.35 }, { opacity: 0, transform: 'scale(1.6)' }],
+      { duration: 520, easing: 'ease-out' },
+    );
+    // ...and a ping rolls outward, the new view opening inside it.
+    const wave = radarWave.current;
+    // The ring rides the middle of the reveal's soft edge, so both share one
+    // scale-from-zero motion: same duration, same easing, no extra keyframes.
+    const W = R + 35;
+    if (wave) Object.assign(wave.style, { width: `${2 * W}px`, height: `${2 * W}px`, margin: `${-W}px 0 0 ${-W}px` });
+    const PING_MS = 1150;
+    const ease = 'cubic-bezier(0.3, 0, 0.15, 1)';
+    await Promise.all([
+      wave?.animate([{ transform: 'scale(0)' }, { transform: 'scale(1)' }], { duration: PING_MS, easing: ease, fill: 'forwards' }).finished.catch(() => undefined),
+      wave?.animate([{ opacity: 1 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }], { duration: PING_MS, fill: 'forwards' }).finished.catch(() => undefined),
+      scanOld.current?.animate(
+        [{ '--reveal': '0px' }, { '--reveal': `${R + 70}px` }] as Keyframe[],
+        { duration: PING_MS, easing: ease, fill: 'forwards' },
+      ).finished.catch(() => undefined),
+    ]);
+    void turning;
+    setScanImg(null);
+    scanning.current = false;
+  };
+
+  // Satellite needs the internet; drop back to the offline map when it goes.
+  useEffect(() => {
+    if (!online) setSatellite(false);
+  }, [online]);
 
   // ---------- search, categories, place cards ----------
   const fitHits = (hs: Hit[]) => {
@@ -677,9 +849,18 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
 
   const startNav = () => {
     if (!route) return;
-    setNav(prepare(route));
+    const p = prepare(route);
+    // Real guidance needs a fix near the route's start. Without one (GPS off,
+    // or a start picked elsewhere) it opens as a preview rather than nothing.
+    const gpsHere = !!fix && (!from || distM([fix.lng, fix.lat], route.coords[0]) < 400);
+    setPreview(!gpsHere);
+    setSimAlong(0);
+    setSimPlay(false);
+    lastCam.current = 0;
+    setNav(p);
     setFollow(true);
     setHits([]);
+    setLayersOpen(false);
     offCount.current = 0;
     void (navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<unknown> } }).wakeLock
       ?.request('screen')
@@ -687,7 +868,8 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   };
   const stopNav = () => {
     setNav(null);
-    setProg(null);
+    setPreview(false);
+    setSimPlay(false);
     setOffer(null);
     mapRef.current?.easeTo({ pitch: 0, bearing: 0, offset: [0, 0], duration: ms(600) });
   };
@@ -732,10 +914,10 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   });
 
   useEffect(() => {
-    if (!nav || !fix || !to) return;
-    const p = progress(nav, [fix.lng, fix.lat]);
-    setProg(p);
-    if (p.remainingM < 30 || distM([fix.lng, fix.lat], to.at) < 25) {
+    if (!nav || !pos || !to || !prog) return;
+    const p = prog;
+    // A preview standing at the start has not "arrived" on a tiny route yet.
+    if ((p.remainingM < 30 || distM([pos.lng, pos.lat], to.at) < 25) && (!preview || simAlong > 0)) {
       stopNav();
       setRoutes([]);
       setArrived(to);
@@ -743,18 +925,19 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       setSnap('half');
       return;
     }
-    offCount.current = isOffRoute(p, fix.accuracy) ? offCount.current + 1 : 0;
+    if (preview) return; // a simulated position never leaves the route
+    offCount.current = isOffRoute(p, pos.accuracy) ? offCount.current + 1 : 0;
     if (offCount.current >= 3 && Date.now() - lastReroute.current > 15_000) {
       lastReroute.current = Date.now();
       offCount.current = 0;
       setNote({ text: t('offRoute'), kind: 'info' });
-      void plan([fix.lng, fix.lat], to.at).then((rs) => rs[0] && setNav(prepare(rs[0])));
+      void plan([pos.lng, pos.lat], to.at).then((rs) => rs[0] && setNav(prepare(rs[0])));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fix, nav, to, plan, t]);
+  }, [prog, to, plan, t]);
 
   useEffect(() => {
-    if (!nav || !to || nav.route.provider === 'offline') return;
+    if (!nav || !to || preview || nav.route.provider === 'offline') return;
     const id = window.setInterval(async () => {
       if (!navigator.onLine || !fix || offer) return;
       const r = await findRoutes(settings, mode, [fix.lng, fix.lat], to.at).catch(() => null);
@@ -763,7 +946,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       if (best && best.provider !== 'offline' && cur - best.duration_s >= SAVE_GAIN_S) setOffer({ route: best, saves: cur - best.duration_s });
     }, RECHECK_MS);
     return () => window.clearInterval(id);
-  }, [nav, to, fix, prog, offer, settings, mode]);
+  }, [nav, to, fix, prog, offer, settings, mode, preview]);
 
   // ---------- trip recording ----------
 
@@ -795,7 +978,6 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   const providerLabel = (r: Route) =>
     r.provider === 'neshan' ? t('providerNeshan') : r.provider === 'google' ? t('providerGoogle') : t('providerOffline');
   const delay = useMemo(() => (route?.duration_free_s ? route.duration_s - route.duration_free_s : null), [route]);
-  const googleOk = settings.has_google_key && online && !inIran(here ?? center());
 
   useEffect(() => {
     if (!layersOpen) return;
@@ -1342,6 +1524,15 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   return (
     <div className={`gmap ${nav ? 'is-nav' : ''} ${metro ? 'is-metro' : ''}`} hidden={!active}>
       <div ref={el} className="map" />
+      {scanImg && (
+        <div ref={scanWrap} className={scanFade ? 'radar-wrap fade-only' : 'radar-wrap'} aria-hidden>
+          <div ref={scanOld} className="scan-old" style={{ backgroundImage: `url(${scanImg})` }} />
+          <div className="radar-rings" />
+          <div ref={radarBeam} className="radar-beam" />
+          <div ref={radarWave} className="radar-wave" />
+          <div className="radar-flash" />
+        </div>
+      )}
 
       {nav && prog ? (
         <div className="nav-top">
@@ -1396,18 +1587,18 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
         {layersOpen && (
           <div className="layers-pop" role="group" aria-label={t('layers')}>
             <div className="layer-types">
-              <button type="button" className={!satellite ? 'ltype on' : 'ltype'} onClick={() => setSatellite(false)} aria-pressed={!satellite}>
+              <button type="button" className={!satellite ? 'ltype on' : 'ltype'} onClick={() => void switchBase(false)} aria-pressed={!satellite}>
                 <span className="lt-thumb map" aria-hidden /> {t('mapDefault')}
               </button>
-              <button type="button" className={satellite ? 'ltype on' : 'ltype'} disabled={!googleOk} onClick={() => setSatellite(true)} aria-pressed={satellite}>
+              <button type="button" className={satellite ? 'ltype on' : 'ltype'} disabled={!online} onClick={() => void switchBase(true)} aria-pressed={satellite}>
                 <span className="lt-thumb sat" aria-hidden /><span><Satellite aria-hidden className="inline" /> {t('satellite')}</span>
               </button>
             </div>
-            {!googleOk && <p className="muted small">{t('satelliteNeedsKey')}</p>}
+            {!online && <p className="muted small">{t('satelliteOffline')}</p>}
             {settings.has_neshan_web_key && (
               <label className="check"><input type="checkbox" checked={traffic} onChange={(e) => setTraffic(e.target.checked)} /><TrafficCone aria-hidden className="inline" /> {t('trafficLayer')}</label>
             )}
-            <label className="check"><input type="checkbox" checked={b3d} onChange={(e) => setB3d(e.target.checked)} /><Box aria-hidden className="inline" /> {t('buildings3d')}</label>
+            <label className="check"><input type="checkbox" checked={b3d} onChange={(e) => toggle3d(e.target.checked)} /><Box aria-hidden className="inline" /> {t('buildings3d')}</label>
           </div>
         )}
       </div>
@@ -1430,6 +1621,14 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
                 <button type="button" className="btn primary" onClick={() => { setRoutes([offer.route]); setSel(0); setNav(prepare(offer.route)); setOffer(null); }}>{t('switchRoute')}</button>
                 <button type="button" className="btn" onClick={() => setOffer(null)}>{t('keep')}</button>
               </span>
+            </div>
+          )}
+          {preview && (
+            <div className="preview-bar">
+              <span className="preview-tag"><i className="lamp device" aria-hidden />{t(from ? 'previewFromStart' : 'previewNoGps')}</span>
+              <button type="button" className={simPlay ? 'btn sm' : 'btn primary sm'} onClick={() => { if (prog && prog.remainingM < 30) setSimAlong(0); setSimPlay((v) => !v); setFollow(true); }}>
+                {simPlay ? <Pause aria-hidden /> : <Play aria-hidden />} {t(simPlay ? 'previewPause' : 'previewPlay')}
+              </button>
             </div>
           )}
           <button type="button" className="icon-btn stop" onClick={stopNav} aria-label={t('stop')}><X aria-hidden /></button>
@@ -1471,6 +1670,16 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       )}
     </div>
   );
+}
+
+/** Preview drive speed in metres per second: a brisk run-through, not real time. */
+function simSpeed(mode: Mode): number {
+  return mode === 'walk' ? 7 : mode === 'motorcycle' ? 30 : 34;
+}
+
+/** Heading for the camera and arrow: the compass while really moving, else the road ahead. */
+function navHeading(p: Prepared, pr: Progress, f: Fix): number {
+  return f.heading !== null && (f.speed ?? 0) > 1.5 ? f.heading : routeBearing(p, pr.along);
 }
 
 /** Direction of travel along the route just ahead of `along` metres. */

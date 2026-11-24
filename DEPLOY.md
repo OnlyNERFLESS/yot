@@ -51,9 +51,13 @@ navigation and place reminders; notifications for reminders.
 
 ## What still needs the internet
 
-Live traffic and traffic-aware routes (Neshan) and satellite view (Google,
-only with a Google key). Maps, search, offline routes, metro, reminders and
-tasks all work with no connection.
+Live traffic and traffic-aware routes (Neshan) and satellite view (Esri
+World Imagery, no key; Google instead when a Google key is set and the device
+is outside Iran). Maps, search, offline routes, metro, reminders and tasks all
+work with no connection.
+
+Esri's imagery is free for light use; heavy commercial use officially calls
+for a (free) ArcGIS account.
 
 ## Publishing a release (and how apps update)
 

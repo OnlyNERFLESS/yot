@@ -92,6 +92,16 @@ export function progress(p: Prepared, at: LngLat): Progress {
   };
 }
 
+/** The point `m` metres along the route, for the no-GPS preview drive. */
+export function pointAlong(p: Prepared, m: number): LngLat {
+  const c = p.route.coords;
+  const i = p.cum.findIndex((x) => x >= m);
+  if (i <= 0) return i === 0 ? c[0] : c[c.length - 1];
+  const seg = p.cum[i] - p.cum[i - 1] || 1;
+  const t = (m - p.cum[i - 1]) / seg;
+  return [c[i - 1][0] + (c[i][0] - c[i - 1][0]) * t, c[i - 1][1] + (c[i][1] - c[i - 1][1]) * t];
+}
+
 /** Off route once the fix is clearly away from the line, allowing for GPS error. */
 export function isOffRoute(pr: Progress, accuracy: number): boolean {
   return pr.offBy > Math.max(50, accuracy * 1.5);

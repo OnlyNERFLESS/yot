@@ -69,13 +69,19 @@ const FLAVORS: Record<Flavor, PmFlavor> = {
     minor_casing: '#0a0c0d', major_casing_early: '#0a0c0d', major_casing_late: '#0a0c0d',
     highway_casing_early: '#0a0c0d', highway_casing_late: '#0a0c0d', link_casing: '#0a0c0d',
   },
+  // Mint & white: a faintly green ground, clearly green parks, white roads,
+  // and the grey-tan landuse blocks (schools, hospitals, industry) pulled
+  // into the same cool family so green is the only colour that reads as land.
   light: {
     ...namedFlavor('light'),
-    background: '#eef4f0',
-    earth: '#f4f8f6',
-    park_a: '#d9f2e2', park_b: '#d9f2e2', wood_a: '#d3ecdb', wood_b: '#d3ecdb',
-    water: '#cfe3ec',
-    buildings: '#e4ebe6',
+    background: '#e8f2ec',
+    earth: '#f1f7f3',
+    park_a: '#c6e9d2', park_b: '#c6e9d2', wood_a: '#bfe4cb', wood_b: '#bfe4cb', scrub_a: '#d2eedb', scrub_b: '#d2eedb',
+    hospital: '#f3e6e6', school: '#e7efe6', industrial: '#e8ecea', military: '#e8ecea', zoo: '#d6efdf',
+    pedestrian: '#f7faf8', aerodrome: '#e8ecea',
+    water: '#bfdfea',
+    buildings: '#e0ebe4',
+    minor_a: '#ffffff', minor_b: '#ffffff', minor_service: '#ffffff', other: '#ffffff',
   },
 };
 
@@ -159,6 +165,7 @@ export function setBasemapHidden(map: MlMap, hidden: boolean) {
 /** A style swap (theme, language) rebuilds every layer visible. */
 export function forgetBasemapState(map: MlMap) {
   hiddenByMetro.delete(map);
+  savedLabelPaint.delete(map);
 }
 
 export interface MapOptions {
@@ -258,17 +265,58 @@ export function setTrafficVisible(map: MlMap, on: boolean) {
 /** Google raster base: roadmap with live traffic while a Google route is shown,
  * or hybrid satellite when the agent picks it. Our overlays stay on top. */
 export function setGoogleBase(map: MlMap, tileUrl: string | null) {
+  setRasterBase(map, tileUrl, 'Map data © Google', false);
+}
+
+/** Free satellite imagery that needs no key (Esri World Imagery). Google's
+ * tiles need a paid key and refuse requests from Iran, so they are only the
+ * upgrade, never the only option. */
+export const ESRI_IMAGERY = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+export const ESRI_ATTRIBUTION = 'Imagery © Esri, Maxar, Earthstar Geographics';
+
+/** A raster base under our overlays. `labelsOver` keeps the map's own place
+ * and street names drawn on top, which turns bare imagery into a hybrid. The
+ * swap itself is instant; the screen's scan transition (MapScreen) hides it. */
+export function setRasterBase(map: MlMap, tileUrl: string | null, attribution: string, labelsOver: boolean) {
   if (map.getLayer('google-base')) map.removeLayer('google-base');
   if (map.getSource('google-base')) map.removeSource('google-base');
+  setLabelsOnImagery(map, !!tileUrl && labelsOver);
   if (!tileUrl) return;
-  map.addSource('google-base', {
-    type: 'raster',
-    tiles: [tileUrl],
-    tileSize: 256,
-    attribution: 'Map data © Google',
-  });
-  const firstOverlay = map.getStyle().layers.find((l) => l.id.startsWith('tb-'))?.id;
-  map.addLayer({ id: 'google-base', type: 'raster', source: 'google-base' }, firstOverlay);
+  map.addSource('google-base', { type: 'raster', tiles: [tileUrl], tileSize: 256, maxzoom: 19, attribution });
+  const layers = map.getStyle().layers;
+  // Above every base fill: the city's layers are drawn after the country's,
+  // so the imagery goes under the city's first label (or the country's when
+  // there is no city pack), not under the first label in the style.
+  const firstLabel = (src: string) => layers.find((l) => l.type === 'symbol' && 'source' in l && l.source === src);
+  const before = (labelsOver ? firstLabel('protomaps') ?? firstLabel('country') : undefined) ?? layers.find((l) => l.id.startsWith('tb-'));
+  map.addLayer({ id: 'google-base', type: 'raster', source: 'google-base', paint: { 'raster-fade-duration': 0 } }, before?.id);
+}
+
+/** Over photos, coloured map labels with a theme halo disappear into the
+ * roofs. White text on a dark halo reads on any imagery; the originals are
+ * kept and put back when the imagery goes. */
+const savedLabelPaint = new WeakMap<MlMap, Map<string, [unknown, unknown]>>();
+function setLabelsOnImagery(map: MlMap, on: boolean) {
+  const saved = savedLabelPaint.get(map);
+  if (!on) {
+    if (saved) for (const [id, [c, h]] of saved) {
+      if (!map.getLayer(id)) continue;
+      map.setPaintProperty(id, 'text-color', c as never);
+      map.setPaintProperty(id, 'text-halo-color', h as never);
+    }
+    savedLabelPaint.delete(map);
+    return;
+  }
+  if (saved) return;
+  const keep = new Map<string, [unknown, unknown]>();
+  for (const l of map.getStyle().layers) {
+    if (l.type !== 'symbol' || !('source' in l) || (l.source !== 'protomaps' && l.source !== 'country')) continue;
+    if (!(l.layout && 'text-field' in l.layout)) continue;
+    keep.set(l.id, [map.getPaintProperty(l.id, 'text-color'), map.getPaintProperty(l.id, 'text-halo-color')]);
+    map.setPaintProperty(l.id, 'text-color', '#ffffff');
+    map.setPaintProperty(l.id, 'text-halo-color', 'rgba(0,0,0,0.85)');
+  }
+  savedLabelPaint.set(map, keep);
 }
 
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
@@ -284,7 +332,7 @@ export function add3dBuildings(map: MlMap, flavor: Flavor) {
     'source-layer': 'buildings',
     minzoom: 14.5,
     paint: {
-      'fill-extrusion-color': flavor === 'dark' ? '#1a1f22' : '#e3e8e5',
+      'fill-extrusion-color': flavor === 'dark' ? '#252b2f' : '#dfece4',
       'fill-extrusion-height': ['coalesce', ['get', 'height'], ['*', ['coalesce', ['get', 'building:levels'], 3], 3]],
       'fill-extrusion-opacity': ['interpolate', ['linear'], ['zoom'], 14.5, 0, 15.5, 0.85],
     },
@@ -357,8 +405,7 @@ export function addOverlays(map: MlMap) {
     } });
   add({ id: 'tb-pos-acc', type: 'circle', source: 'tb-pos', filter: ['==', ['get', 'kind'], 'acc'],
     paint: { 'circle-color': '#16db65', 'circle-opacity': 0.12, 'circle-radius': ['get', 'px'] } });
-  add({ id: 'tb-pos', type: 'circle', source: 'tb-pos', filter: ['==', ['get', 'kind'], 'dot'],
-    paint: { 'circle-radius': 5.5, 'circle-color': '#16db65', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } });
+  // The position marker itself is a DOM overlay (map/puck.ts); only the accuracy circle is a layer.
 }
 
 // ---------------- metro ----------------

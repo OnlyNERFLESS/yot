@@ -5,9 +5,9 @@ import {
 import { useBack } from '../lib/back';
 import { useApp } from '../app/ctx';
 import { api, type Reminder, type ReminderInput, type Repeat, type SavedPlace, type Task } from '../lib/api';
-import { eventsOn, HIJRI_MONTHS_EN, HIJRI_MONTHS_FA, toHijri, type CalEvent } from '../lib/events';
+import { eventsOn, type CalEvent } from '../lib/events';
 import { fromJalali, JALALI_MONTHS, JALALI_MONTHS_EN, jalaliMonthLength, toJalali } from '../lib/jalali';
-import { nf } from '../lib/i18n';
+import { dict, nf, type Lang } from '../lib/i18n';
 import { dayKey, occurrences } from '../lib/recur';
 import { remindersChanged } from '../lib/reminderEngine';
 import { DateField } from '../ui/DateField';
@@ -22,9 +22,29 @@ const ALERT_CHOICES = [0, 5, 15, 30, 60, 1440];
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const sameDay = (a: Date, b: Date) => dayKey(a) === dayKey(b);
 
+const SYSTEM_KEY = 'yot.calSystem';
+
+/** The calendar's content speaks the calendar on screen: on the Persian
+ * (Solar Hijri) calendar the numbers, month and day names and the holiday and
+ * event details are Persian; on Gregorian they are English. The app's own
+ * language (buttons, headings, layout direction) never changes with it. */
 export function Calendar({ active }: { active: boolean }) {
+  const { lang } = useApp();
+  const [system, setSystemState] = useState<System>(() => {
+    const saved = localStorage.getItem(SYSTEM_KEY);
+    return saved === 'g' || saved === 'j' ? saved : lang === 'fa' ? 'j' : 'g';
+  });
+  const setSystem = (v: System) => {
+    localStorage.setItem(SYSTEM_KEY, v);
+    setSystemState(v);
+  };
+  return <CalendarBody active={active} system={system} setSystem={setSystem} />;
+}
+
+function CalendarBody({ active, system, setSystem }: { active: boolean; system: System; setSystem: (s: System) => void }) {
   const { t, lang, go } = useApp();
-  const [system, setSystem] = useState<System>(lang === 'fa' ? 'j' : 'g');
+  /** The calendar content's language (numbers, names, events); `lang` stays the UI's. */
+  const cl: Lang = system === 'j' ? 'fa' : 'en';
   const [cursor, setCursor] = useState(() => new Date());
   const [selected, setSelected] = useState(() => new Date());
   const [reminders, setReminders] = useState<Reminder[]>([]);
@@ -50,15 +70,16 @@ export function Calendar({ active }: { active: boolean }) {
       const m = cursor.getMonth();
       const n = new Date(y, m + 1, 0).getDate();
       const days = Array.from({ length: n }, (_, i) => new Date(y, m, i + 1));
-      const title = cursor.toLocaleDateString(lang === 'fa' ? 'fa-IR-u-ca-gregory' : 'en-GB', { month: 'long', year: 'numeric' });
+      const title = cursor.toLocaleDateString(cl === 'fa' ? 'fa-IR-u-ca-gregory' : 'en-GB', { month: 'long', year: 'numeric' });
       return { days, title };
     }
     const j = toJalali(cursor);
     const n = jalaliMonthLength(j.jy, j.jm);
     const days = Array.from({ length: n }, (_, i) => fromJalali(j.jy, j.jm, i + 1));
-    const title = lang === 'fa' ? `${JALALI_MONTHS[j.jm - 1]} ${nf('fa', j.jy)}` : `${JALALI_MONTHS_EN[j.jm - 1]} ${j.jy}`;
+    // A year is not a quantity: no thousands separator (۱۴۰۵, not ۱٬۴۰۵).
+    const title = cl === 'fa' ? `${JALALI_MONTHS[j.jm - 1]} ${j.jy.toLocaleString('fa-IR', { useGrouping: false })}` : `${JALALI_MONTHS_EN[j.jm - 1]} ${j.jy}`;
     return { days, title };
-  }, [system, cursor, lang]);
+  }, [system, cursor, cl]);
 
   const lead = (month.days[0].getDay() + 1) % 7; // weeks start on Saturday
   const from = month.days[0].getTime();
@@ -85,8 +106,8 @@ export function Calendar({ active }: { active: boolean }) {
     }
   };
 
-  const secondary = (d: Date) => (system === 'g' ? nf(lang, toJalali(d).jd) : nf(lang, d.getDate()));
-  const primary = (d: Date) => (system === 'g' ? nf(lang, d.getDate()) : nf(lang, toJalali(d).jd));
+  const secondary = (d: Date) => (system === 'g' ? nf(cl, toJalali(d).jd) : nf(cl, d.getDate()));
+  const primary = (d: Date) => (system === 'g' ? nf(cl, d.getDate()) : nf(cl, toJalali(d).jd));
 
   const startNew = () =>
     setEditing({
@@ -98,11 +119,13 @@ export function Calendar({ active }: { active: boolean }) {
   const agenda = byDay.get(dayKey(selected)) ?? [];
   const today = new Date();
   const selEvents = eventsOn(selected);
-  const selH = toHijri(selected);
-  const selHText = selH ? `${nf(lang, selH.hd)} ${(lang === 'fa' ? HIJRI_MONTHS_FA : HIJRI_MONTHS_EN)[selH.hm - 1]} ${lang === "fa" ? selH.hy.toLocaleString("fa-IR", { useGrouping: false }) : selH.hy}` : '';
-  const selTitle = selected.toLocaleDateString(lang === 'fa' ? 'fa-IR' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+  // The day in the calendar on screen, then the same day in the other one.
   const selJ = toJalali(selected);
-  const selJText = lang === 'fa' ? '' : `${selJ.jd} ${JALALI_MONTHS_EN[selJ.jm - 1]} ${selJ.jy}`;
+  const selG = selected.toLocaleDateString(cl === 'fa' ? 'fa-IR-u-ca-gregory' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const selTitle = system === 'j'
+    ? `${selected.toLocaleDateString('fa-IR', { weekday: 'long' })} ${nf('fa', selJ.jd)} ${JALALI_MONTHS[selJ.jm - 1]}`
+    : selected.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+  const selOther = system === 'j' ? `${selG} میلادی` : `${selJ.jd} ${JALALI_MONTHS_EN[selJ.jm - 1]} ${selJ.jy} (Persian)`;
 
   return (
     <div className="page cal" hidden={!active}>
@@ -116,13 +139,13 @@ export function Calendar({ active }: { active: boolean }) {
 
       <section className="card cal-card">
         <div className="cal-bar">
-          <button type="button" className="icon-btn" onClick={() => shift(lang === 'fa' ? 1 : -1)} aria-label="previous"><ChevronLeft aria-hidden /></button>
-          <h2 className="cal-title">{month.title}</h2>
-          <button type="button" className="icon-btn" onClick={() => shift(lang === 'fa' ? -1 : 1)} aria-label="next"><ChevronRight aria-hidden /></button>
+          <button type="button" className="icon-btn" onClick={() => shift(-1)} aria-label={t('prevMonth')}>{lang === 'fa' ? <ChevronRight aria-hidden /> : <ChevronLeft aria-hidden />}</button>
+          <h2 className="cal-title" lang={cl} dir="auto">{month.title}</h2>
+          <button type="button" className="icon-btn" onClick={() => shift(1)} aria-label={t('nextMonth')}>{lang === 'fa' ? <ChevronLeft aria-hidden /> : <ChevronRight aria-hidden />}</button>
           <button type="button" className="btn sm" onClick={() => { setCursor(new Date()); setSelected(new Date()); }}>{t('todayBtn')}</button>
         </div>
         <div className="cal-grid" role="grid">
-          {(lang === 'fa' ? WEEK_FA : WEEK_EN).map((w, i) => <div key={w} className={i === 6 ? 'cal-wd fri' : 'cal-wd'} role="columnheader">{w}</div>)}
+          {(cl === 'fa' ? WEEK_FA : WEEK_EN).map((w, i) => <div key={w} className={i === 6 ? 'cal-wd fri' : 'cal-wd'} role="columnheader">{w}</div>)}
           {Array.from({ length: lead }, (_, i) => <div key={`l${i}`} className="cal-pad" />)}
           {month.days.map((d) => {
             const items = byDay.get(dayKey(d)) ?? [];
@@ -131,10 +154,10 @@ export function Calendar({ active }: { active: boolean }) {
             const occ = evs.some((e) => e.kind === 'occasion');
             const cls = ['cal-day', d.getDay() === 5 || hol ? 'off' : '', hol ? 'hol' : '', sameDay(d, today) ? 'today' : '', sameDay(d, selected) ? 'sel' : ''].join(' ');
             return (
-              <button key={d.getTime()} type="button" className={cls} onClick={() => { setSelected(d); setEditing(null); }} aria-label={[d.toDateString(), ...evs.map((e) => (lang === 'fa' ? e.fa : e.en))].join(', ')} aria-pressed={sameDay(d, selected)}>
+              <button key={d.getTime()} type="button" className={cls} onClick={() => { setSelected(d); setEditing(null); }} aria-label={[d.toLocaleDateString(cl === 'fa' ? 'fa-IR' : 'en-GB', { dateStyle: 'full' }), ...evs.map((e) => (cl === 'fa' ? e.fa : e.en))].join(', ')} aria-pressed={sameDay(d, selected)}>
                 <span className="num cal-n">{primary(d)}</span>
                 <span className="cal-s">{secondary(d)}</span>
-                {evs.length > 0 && !hol && <i className={occ ? 'cal-ev occ' : 'cal-ev world'} aria-hidden />}
+                {occ && !hol && <i className="cal-ev occ" aria-hidden />}
                 {items.length > 0 && <span className="cal-dots" aria-hidden>{items.slice(0, 3).map((x, i) => <i key={i} className={x.r.place ? 'geo' : ''} />)}</span>}
               </button>
             );
@@ -154,8 +177,8 @@ export function Calendar({ active }: { active: boolean }) {
         <section className="card agenda">
           <div className="agenda-head">
             <div>
-              <h2>{selTitle}</h2>
-              <p className="muted small">{[selJText, selHText].filter(Boolean).join(' · ')}</p>
+              <h2 lang={cl} dir="auto">{selTitle}</h2>
+              <p className="muted small" lang={cl} dir="auto">{selOther}</p>
             </div>
             <div className="agenda-btns">
               <button type="button" className="btn primary" onClick={() => setQuick(true)}><Zap aria-hidden /> {t('quickAdd')}</button>
@@ -164,7 +187,7 @@ export function Calendar({ active }: { active: boolean }) {
           </div>
           {selEvents.length > 0 && (
             <ul className="plain day-events" aria-label={t('dayEvents')}>
-              {selEvents.map((e, i) => <EventRow key={i} e={e} />)}
+              {selEvents.map((e, i) => <EventRow key={i} e={e} cl={cl} />)}
             </ul>
           )}
           {agenda.length === 0 ? (
@@ -366,12 +389,12 @@ function ReminderEditor({ value, places, tasks, onCancel, onSaved }: {
   );
 }
 
-function EventRow({ e }: { e: CalEvent }) {
-  const { t, lang } = useApp();
+/** A holiday or occasion, in the calendar's language rather than the app's. */
+function EventRow({ e, cl }: { e: CalEvent; cl: Lang }) {
   return (
-    <li className={`ev-row ${e.kind}`}>
-      <span className="ev-chip">{t(e.kind === 'holiday' ? 'evHoliday' : e.kind === 'occasion' ? 'evOccasion' : 'evWorld')}</span>
-      <span className="ev-name" lang={lang}>{lang === 'fa' ? e.fa : e.en}</span>
+    <li className={`ev-row ${e.kind}`} lang={cl} dir="auto">
+      <span className="ev-chip">{dict[cl][e.kind === 'holiday' ? 'evHoliday' : 'evOccasion']}</span>
+      <span className="ev-name">{cl === 'fa' ? e.fa : e.en}</span>
     </li>
   );
 }
