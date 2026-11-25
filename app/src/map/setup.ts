@@ -127,17 +127,14 @@ export function baseStyle(packs: BasePacks, flavor: Flavor, lang: 'en' | 'fa'): 
   return style;
 }
 
-/** Sources whose layers are "the city": hidden in metro mode, which shows the
- * network on a plain ground. */
-const BASE_SOURCES = new Set(['protomaps', 'country', 'google-base', 'nsh-traffic']);
-/** What stays of the city under the metro: ground, parks, water, the main
- * road skeleton and district names. No buildings, side streets, shops or road
- * labels, which would fight the station labels. */
-const METRO_UNDERLAY = /^(c-)?(earth|landcover|landuse_park|landuse_urban_green|water|water_river|roads(_bridges|_tunnels)?_(highway|major)|boundaries|places_locality|places_subplace)$/;
+/** What metro mode switches off: satellite, traffic and 3D buildings. The
+ * city itself stays, faded under a veil, so the network sits exactly where it
+ * runs; taps in metro mode only ever reach stations. */
+const BASE_SOURCES = new Set(['google-base', 'nsh-traffic']);
 const hiddenByMetro = new WeakMap<MlMap, Map<string, 'visible' | 'none'>>();
 
-/** Metro mode: the lines and stations over a faint, low-detail city. Restores
- * each layer's own visibility afterwards, so traffic and 3D toggles survive. */
+/** Metro mode: the network over a faded city. Restores each layer's own
+ * visibility afterwards, so traffic, satellite and 3D toggles survive. */
 export function setBasemapHidden(map: MlMap, hidden: boolean) {
   const style = map.getStyle();
   if (!style) return;
@@ -151,7 +148,6 @@ export function setBasemapHidden(map: MlMap, hidden: boolean) {
     for (const l of style.layers) {
       const src = 'source' in l ? (l.source as string | undefined) : undefined;
       if (!(src && BASE_SOURCES.has(src)) && l.id !== 'tb-3d') continue;
-      if ((src === 'protomaps' || src === 'country') && METRO_UNDERLAY.test(l.id)) continue;
       const vis = (map.getLayoutProperty(l.id, 'visibility') as 'visible' | 'none' | undefined) ?? 'visible';
       if (!saved.has(l.id)) saved.set(l.id, vis);
       if (vis !== 'none') map.setLayoutProperty(l.id, 'visibility', 'none');
@@ -454,28 +450,32 @@ export const METRO_LAYERS = ['tb-metro-casing', 'tb-metro-line', 'tb-metro-journ
 export function addMetro(map: MlMap, flavor: Flavor) {
   if (map.getSource('tb-metro')) return;
   for (const id of ['tb-metro', 'tb-metro-st', 'tb-metro-j']) map.addSource(id, { type: 'geojson', data: EMPTY });
-  const ground = flavor === 'dark' ? '#060708' : '#ffffff';
+  const ground = flavor === 'dark' ? '#0a0d0c' : '#f5f9f6';
   const before = map.getLayer('tb-alts') ? 'tb-alts' : undefined;
-  // Metro mode keeps a faint Tehran underneath (see METRO_UNDERLAY); this
-  // veil dims all of it evenly so the coloured lines own the screen.
+  // A light fade over the whole city, labels included, so the lines and
+  // stations come first while the city stays readable; darker in dark mode.
   map.addLayer({ id: 'tb-metro-veil', type: 'background', layout: { visibility: 'none' },
-    paint: { 'background-color': ground, 'background-opacity': flavor === 'dark' ? 0.5 : 0.55 } }, before);
+    paint: { 'background-color': flavor === 'dark' ? '#020403' : ground, 'background-opacity': flavor === 'dark' ? 0.62 : 0.42 } }, before);
   map.addLayer({ id: 'tb-metro-casing', type: 'line', source: 'tb-metro', layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
     paint: { 'line-color': ground, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 15, 9] } }, before);
   map.addLayer({ id: 'tb-metro-line', type: 'line', source: 'tb-metro', layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
-    paint: { 'line-color': ['get', 'colour'], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2.5, 15, 6], 'line-opacity': ['case', ['get', 'dim'], 0.25, 1] } }, before);
+    paint: { 'line-color': ['get', 'colour'], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2.5, 15, 6], 'line-opacity': ['case', ['get', 'dim'], 0.22, 1],
+      'line-opacity-transition': { duration: 250 } } }, before);
   map.addLayer({ id: 'tb-metro-journey', type: 'line', source: 'tb-metro-j', layout: { 'line-cap': 'round', 'line-join': 'round', visibility: 'none' },
-    paint: { 'line-color': ['get', 'colour'], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 6, 15, 12] } });
+    paint: { 'line-color': ['get', 'colour'], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4.5, 15, 9] } });
   map.addLayer({ id: 'tb-metro-st', type: 'circle', source: 'tb-metro-st', layout: { visibility: 'none' },
     paint: {
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, ['case', ['get', 'inter'], 4.5, 3], 15, ['case', ['get', 'inter'], 9, 6]],
       'circle-color': ground,
       'circle-stroke-color': ['case', ['get', 'sel'], '#16db65', ['get', 'colour']],
       'circle-stroke-width': ['case', ['get', 'sel'], 4, ['get', 'inter'], 3, 2],
+      'circle-opacity': ['case', ['get', 'dim'], 0.3, 1],
+      'circle-stroke-opacity': ['case', ['get', 'dim'], 0.3, 1],
     } });
   map.addLayer({ id: 'tb-metro-label', type: 'symbol', source: 'tb-metro-st', minzoom: 12,
     layout: { visibility: 'none', 'text-field': ['get', 'label'], 'text-font': ['Noto Sans Medium'], 'text-size': 12, 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-optional': true },
-    paint: { 'text-color': flavor === 'dark' ? '#f2f5f3' : '#070908', 'text-halo-color': ground, 'text-halo-width': 1.6 } });
+    paint: { 'text-color': flavor === 'dark' ? '#f2f5f3' : '#070908', 'text-halo-color': ground, 'text-halo-width': 1.6,
+      'text-opacity': ['case', ['get', 'dim'], 0.35, 1] } });
 }
 
 export function setMetroVisible(map: MlMap, on: boolean) {

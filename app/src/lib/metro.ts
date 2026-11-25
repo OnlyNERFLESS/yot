@@ -31,15 +31,24 @@ export interface Journey {
   stops: number;
 }
 
+/** One running direction of a line: its stations in order, as station ids. */
+export interface Direction {
+  line: TransitLine;
+  seq: number[];
+}
+
 export interface Network {
   stations: Station[];
   lines: TransitLine[];
+  dirs: Direction[];
+  /** Every drawn piece of a line, both directions; the same array each call. */
+  geomOf: (ref: string) => LngLat[][];
   colourOf: (ref: string) => string;
   plan: (from: number, to: number) => Journey | null;
   nearest: (at: LngLat) => { station: Station; distance_m: number } | null;
 }
 
-const RIDE_MIN = 2.2; // between consecutive stations, dwell included
+export const RIDE_MIN = 2.2; // between consecutive stations, dwell included
 const WAIT_MIN = 4; // average wait boarding the first train
 const CHANGE_MIN = 8; // walking between platforms plus the next wait; people prefer fewer changes
 const MERGE_M = 450; // same name within this distance = one interchange station
@@ -68,7 +77,7 @@ export function buildNetwork(lines: TransitLine[]): Network {
   // Directed edges per line direction, keeping each direction's terminus.
   type Edge = { to: number; line: string; dir: number };
   const adj: Edge[][] = [];
-  const dirs: { line: TransitLine; seq: number[] }[] = [];
+  const dirs: Direction[] = [];
   for (const l of lines) {
     const seq = l.stops.map((s) => stationFor(s, l.ref));
     const d = dirs.length;
@@ -148,5 +157,126 @@ export function buildNetwork(lines: TransitLine[]): Network {
     return best;
   };
 
-  return { stations, lines, colourOf: (ref) => colours.get(ref) ?? '#9aa3a0', plan, nearest };
+  const geoms = new Map<string, LngLat[][]>();
+  const geomOf = (ref: string) => {
+    let g = geoms.get(ref);
+    if (!g) geoms.set(ref, (g = lines.filter((l) => l.ref === ref).flatMap((l) => l.geom)));
+    return g;
+  };
+
+  return { stations, lines, dirs, geomOf, colourOf: (ref) => colours.get(ref) ?? '#9aa3a0', plan, nearest };
+}
+
+// ---------- along a line's drawn shape ----------
+// Station-to-station straight segments cut corners, so anything drawn on a
+// line (a journey, a train) is placed on the line's own geometry instead.
+// Planar maths in degrees with longitude scaled by cos(lat): exact enough
+// inside one city, and far cheaper than geodesics.
+
+const COS = Math.cos((35.7 * Math.PI) / 180);
+type Hit = { s: number; d: number };
+
+function project(piece: LngLat[], p: LngLat): Hit {
+  let acc = 0;
+  let best: Hit = { s: 0, d: Infinity };
+  for (let i = 0; i + 1 < piece.length; i++) {
+    const [ax, ay] = piece[i];
+    const dx = (piece[i + 1][0] - ax) * COS;
+    const dy = piece[i + 1][1] - ay;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, ((p[0] - ax) * COS * dx + (p[1] - ay) * dy) / len2)) : 0;
+    const ex = (p[0] - ax) * COS - dx * t;
+    const ey = p[1] - ay - dy * t;
+    const d = ex * ex + ey * ey;
+    if (d < best.d) best = { s: acc + t * Math.sqrt(len2), d };
+    acc += Math.sqrt(len2);
+  }
+  return best;
+}
+
+/** The piece of a line both points sit on, with each point's distance along it. */
+function span(geom: LngLat[][], a: LngLat, b: LngLat) {
+  let best: { piece: LngLat[]; sa: number; sb: number; d: number } | null = null;
+  for (const piece of geom) {
+    const pa = project(piece, a);
+    const pb = project(piece, b);
+    if (!best || pa.d + pb.d < best.d) best = { piece, sa: pa.s, sb: pb.s, d: pa.d + pb.d };
+  }
+  // ~350 m off the drawn line in either point: the shape is not this pair's.
+  return best && best.d < 2 * (0.0032 ** 2) ? best : null;
+}
+
+function walk(piece: LngLat[], from: number, to: number): LngLat[] {
+  const fwd = from <= to;
+  const [lo, hi] = fwd ? [from, to] : [to, from];
+  const out: LngLat[] = [];
+  let acc = 0;
+  for (let i = 0; i + 1 < piece.length; i++) {
+    const a = piece[i];
+    const b = piece[i + 1];
+    const len = Math.hypot((b[0] - a[0]) * COS, b[1] - a[1]);
+    const t0 = len ? (lo - acc) / len : 0;
+    const t1 = len ? (hi - acc) / len : 0;
+    if (t0 <= 1 && t1 >= 0) {
+      const p = (t: number): LngLat => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      if (!out.length) out.push(p(Math.max(0, t0)));
+      out.push(p(Math.min(1, t1)));
+    }
+    acc += len;
+    if (acc > hi) break;
+  }
+  return fwd ? out : out.reverse();
+}
+
+/** The drawn line between consecutive stations, joined; straight where the
+ * shape does not fit. */
+export function sliceLine(geom: LngLat[][], stops: LngLat[]): LngLat[] {
+  const out: LngLat[] = [stops[0]];
+  for (let i = 1; i < stops.length; i++) {
+    const sp = span(geom, stops[i - 1], stops[i]);
+    const part = sp ? walk(sp.piece, sp.sa, sp.sb) : [stops[i - 1], stops[i]];
+    out.push(...part.slice(1));
+  }
+  return out;
+}
+
+/** A point a fraction of the way from station `a` to station `b` along the
+ * line, and the direction of travel there (degrees clockwise from north). */
+const paths = new WeakMap<LngLat[][], Map<string, { path: LngLat[]; lens: number[]; total: number }>>();
+
+/** The drawn path between two stations, measured; cached, since trains ask
+ * for the same few pairs on every update. */
+function pathBetween(geom: LngLat[][], a: LngLat, b: LngLat) {
+  let byPair = paths.get(geom);
+  if (!byPair) paths.set(geom, (byPair = new Map()));
+  const k = `${a[0]},${a[1]}|${b[0]},${b[1]}`;
+  let hit = byPair.get(k);
+  if (!hit) {
+    const sp = span(geom, a, b);
+    const path = sp ? walk(sp.piece, sp.sa, sp.sb) : [a, b];
+    let total = 0;
+    const lens = path.slice(1).map((p, i) => {
+      const l = Math.hypot((p[0] - path[i][0]) * COS, p[1] - path[i][1]);
+      total += l;
+      return l;
+    });
+    byPair.set(k, (hit = { path, lens, total }));
+  }
+  return hit;
+}
+
+export function alongLine(geom: LngLat[][], a: LngLat, b: LngLat, f: number): { at: LngLat; bearing: number } {
+  const { path, lens, total } = pathBetween(geom, a, b);
+  let want = total * Math.max(0, Math.min(1, f));
+  for (let i = 0; i < lens.length; i++) {
+    const p = path[i];
+    const q = path[i + 1];
+    if (want <= lens[i] || i === lens.length - 1) {
+      const t = lens[i] ? Math.min(1, want / lens[i]) : 0;
+      const bearing = (Math.atan2((q[0] - p[0]) * COS, q[1] - p[1]) * 180) / Math.PI;
+      return { at: [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t], bearing };
+    }
+    want -= lens[i];
+  }
+  return { at: a, bearing: 0 };
 }

@@ -3,13 +3,13 @@ import type { Map as MlMap, MapGeoJSONFeature } from 'maplibre-gl';
 import {
   ArrowLeftRight, Footprints as WalkIcon,
   ArrowLeft, Banknote, BedDouble, Bike, Bookmark, Box, Car, Check, CircleCheck, Clock, History, Coffee, Compass, Ellipsis, Flag,
-  Footprints, Fuel, Globe, Hospital, Landmark, Layers, LayoutGrid, LocateFixed, MapPin, Navigation, Pause, Phone, Pill, Play, Satellite,
-  Camera, Copy, Search, Share2, ShoppingCart, SquareParking, TrafficCone, TrainFront, Utensils, Users, X, type LucideIcon,
+  Footprints, Fuel, Globe, Hospital, Landmark, Layers, LayoutGrid, LocateFixed, MapPin, Navigation, Pause, Phone, Pill, Play, Radio, Satellite,
+  Camera, Copy, Search, Share2, ShoppingCart, SquareParking, Star, TrafficCone, TrainFront, Utensils, Users, X, type LucideIcon,
 } from 'lucide-react';
 import { useApp } from '../app/ctx';
 import { api, type Hit, type LngLat, type Mode, type Route } from '../lib/api';
 import { fmtClock, fmtDistance, fmtDuration, humanError, instruction, kindLabel, nf, sep, type Key } from '../lib/i18n';
-import { isMobile, openAppPermissionSettings, openPhoneLocationSettings, requestLocationPermission, watch, type Fix, type LocProblem } from '../lib/location';
+import { isMobile, locationSwitchOn, openAppPermissionSettings, openPhoneLocationSettings, requestLocationPermission, watch, type Fix, type LocProblem } from '../lib/location';
 import { distM, isOffRoute, pointAlong, prepare, progress, type Prepared, type Progress } from '../lib/nav';
 import { findRoutes } from '../lib/routing';
 import { googleTiles, inIran } from '../lib/online';
@@ -26,8 +26,12 @@ import { startRouteScan } from '../map/routeScan';
 import { Puck } from '../map/puck';
 import { SelPin } from '../map/selpin';
 import { StreetView } from '../ui/StreetView';
-import { MetroArrivals } from '../ui/MetroArrivals';
-import { buildNetwork, type Journey, type Network, type Station } from '../lib/metro';
+import { MetroArrivals, minutesLeft, useArrivals } from '../ui/MetroArrivals';
+import { buildNetwork, sliceLine, type Journey, type Network, type Station } from '../lib/metro';
+import { sameStation } from '../lib/metroEta';
+import { placeAll, sightings, TrainMarkers, type Sighting } from '../map/trains';
+import { sweep } from '../lib/metroLive';
+import { loadFavs, loadTrips, rememberTrip, toggleFav } from '../lib/metroSaved';
 import { fold } from '../lib/fold';
 import { placeMessage, shareText } from '../lib/share';
 
@@ -187,8 +191,10 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   const [mPick, setMPick] = useState<'from' | 'to' | null>(null);
   const [mQuery, setMQuery] = useState('');
   const [station, setStation] = useState<Station | null>(null);
+  const [favs, setFavs] = useState(loadFavs);
+  const [trips, setTrips] = useState(loadTrips);
   const metroRef = useRef(false);
-  const stationTapRef = useRef<(name: string) => void>(() => {});
+  const stationTapRef = useRef<(key: string | null) => void>(() => {});
 
   // The map's handlers are bound once; they call the latest versions through these.
   const emptyRef = useRef<(at: LngLat) => void>(() => {});
@@ -276,10 +282,9 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
         }
         if (metroRef.current) {
           const st = nearestFeature(map, e.point, ['tb-metro-st', 'tb-metro-label'], (x) => x.properties?.key !== undefined);
-          if (st?.properties?.key !== undefined) {
-            stationTapRef.current(String(st.properties.key));
-            return;
-          }
+          if (st?.properties?.key !== undefined) stationTapRef.current(String(st.properties.key));
+          else stationTapRef.current(null);
+          return; // metro shows the network only: no places or dropped pins
         }
         const layers = ['pois', 'places_subplace', 'places_locality'].filter((id) => map.getLayer(id));
         const f = nearestFeature(map, e.point, layers, (x) => !!x.properties?.name);
@@ -297,6 +302,8 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       puckRef.current?.remove();
       puckRef.current = null;
       selRef.current?.remove();
+      trainsRef.current?.remove();
+      trainsRef.current = null;
       selRef.current = null;
       mapRef.current?.remove();
       mapRef.current = null;
@@ -326,13 +333,24 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   useEffect(() => {
     let stop = () => {};
     let alive = true;
+    let kept: Fix | null = null;
     void watch(
       (f) => {
+        // Fixes arrive every second, and each one re-renders this whole
+        // screen. Outside navigation, standing still is mostly GPS jitter:
+        // keep a fix only when it moved, got notably better or worse, or
+        // ten seconds passed. It also steadies the dot.
+        if (!navRef.current && kept && f.t - kept.t < 10_000 && distM([kept.lng, kept.lat], [f.lng, f.lat]) < 3 && Math.abs(f.accuracy - kept.accuracy) < kept.accuracy * 0.3) return;
+        kept = f;
         setFix(f);
         setLocErr(null);
         setLocProblem(null);
       },
       (m, p) => {
+        // A passing hiccup while a fresh fix is in hand changes nothing on
+        // screen. Off and denied are real and always get through.
+        if (p === 'error' && kept && Date.now() - kept.t < 30_000) return;
+        kept = null; // the next fix must get through to clear this
         setLocErr(m);
         setLocProblem(p);
       },
@@ -346,11 +364,13 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   // Location refused or switched off: say so once, as a prompt with a way to
   // fix it, instead of a grey status line nobody reads.
   useEffect(() => {
-    if (active && !metro && locErr && !fix && !askedLoc.current) {
+    // On a phone, 'error' means permission and switch are fine and there is
+    // simply no fix yet (indoors, GPS warming up): no dialog can help that.
+    if (active && !metro && locErr && !fix && !askedLoc.current && !(isMobile && locProblem === 'error')) {
       askedLoc.current = true;
       setLocAsk(true);
     }
-  }, [active, metro, locErr, fix]);
+  }, [active, metro, locErr, fix, locProblem]);
   useEffect(() => {
     if (fix) setLocAsk(false);
   }, [fix]);
@@ -819,10 +839,29 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
 
   metroRef.current = metro;
   stationTapRef.current = (key) => {
+    if (key === null) return setStation(null);
     const s = net?.stations[Number(key)];
     if (s) {
+      // Two taps plan a trip: the first is the start, the second the
+      // destination. A tap after that starts a new trip.
+      if (mFrom !== null && mTo === null && s.id !== mFrom) {
+        setMTo(s.id);
+        setStation(null);
+        setMPick(null);
+        setSnap('half');
+        return; // the journey framing takes the camera
+      }
+      setMFrom(s.id);
+      setMTo(null);
+      setMPick(null);
       setStation(s);
       setSnap('half');
+      // Glide it into the open part of the screen, clear of the card that
+      // is about to open over it. An offset, not padding: easeTo's padding
+      // would stay on the map for every later move.
+      const map = mapRef.current;
+      const p = framePadding(true);
+      map?.easeTo({ center: s.at, zoom: Math.max(map.getZoom(), 12), offset: [(p.left - p.right) / 2, (p.top - p.bottom) / 2], duration: ms(450) });
     }
   };
   tapRef.current = (name, nameEn, kind, at) => void tapPlace(name, nameEn, kind, at);
@@ -872,7 +911,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       map.flyTo({ center: [fix.lng, fix.lat], zoom: Math.max(map.getZoom(), 15.5), duration: ms(700) });
       return;
     }
-    if (locErr) setLocAsk(true);
+    if (locErr && !(isMobile && locProblem === 'error')) setLocAsk(true);
     else setNote({ text: t('locatingHint'), kind: 'info' });
   };
   /** "Allow" must always lead somewhere: the permission prompt, or the
@@ -883,7 +922,8 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       void api.openLocationSettings().catch(warn);
       return;
     }
-    if (locProblem === 'off') {
+    // Checked live, not from the last error: the switch may have changed.
+    if (!locationSwitchOn()) {
       // The phone's location switch is off: no permission prompt can help.
       awaitingSettings.current = true;
       openPhoneLocationSettings();
@@ -1032,9 +1072,11 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     if (driver) return setDriver(null), true;
     if (layersOpen) return setLayersOpen(false), true;
     if (metro) {
-      if (station) return setStation(null), true;
+      // One step back per press: the destination, then the start.
       if (mPick) return setMPick(null), true;
-      if (mFrom !== null || mTo !== null) return setMFrom(null), setMTo(null), true;
+      if (mTo !== null) return setMTo(null), setStation(mFrom !== null && net ? net.stations[mFrom] : null), true;
+      if (mFrom !== null) return setMFrom(null), setStation(null), true;
+      if (station) return setStation(null), true;
       return false;
     }
     if (nav) return stopNav(), true;
@@ -1143,6 +1185,10 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     () => (net && mFrom !== null && mTo !== null ? net.plan(mFrom, mTo) : null),
     [net, mFrom, mTo],
   );
+  useEffect(() => {
+    if (net && journey && mFrom !== null && mTo !== null) setTrips((x) => rememberTrip(x, { from: net.stations[mFrom].name, to: net.stations[mTo].name }));
+  }, [journey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const byName = (name: string) => net?.stations.find((x) => x.name === name);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1150,17 +1196,62 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     setMetroVisible(map, metro);
     setBasemapHidden(map, metro);
     if (!metro || !net) return;
-    const onJourney = new Set(journey?.legs.map((l) => l.line) ?? []);
-    setData(map, 'tb-metro', fc(net.lines.flatMap((l) => l.geom.map((g) => line(g, { colour: l.colour, dim: journey !== null && !onJourney.has(l.ref) })))));
+    // A planned journey dims the whole network and redraws its own legs on
+    // the lines' real shape, so it reads as one bright path.
+    const onJourney = new Set(journey?.legs.flatMap((l) => [l.from.at, l.to.at, ...l.path]) ?? []);
+    setData(map, 'tb-metro', fc(net.lines.flatMap((l) => l.geom.map((g) => line(g, { colour: l.colour, dim: journey !== null })))));
     setData(map, 'tb-metro-st', fc(net.stations.map((s) =>
       point(s.at, {
         key: s.id, inter: s.lines.length > 1, colour: net.colourOf(s.lines[0]),
         sel: s.id === mFrom || s.id === mTo || s.id === station?.id,
+        dim: journey !== null && !onJourney.has(s.at),
         label: lang === 'en' ? cleanName(s.name_en || s.name) : cleanName(s.name),
       }),
     )));
-    setData(map, 'tb-metro-j', fc((journey?.legs ?? []).map((l) => line(l.path, { colour: l.colour }))));
+    setData(map, 'tb-metro-j', fc((journey?.legs ?? []).map((l) =>
+      line(sliceLine(net.lines.filter((x) => x.ref === l.line).flatMap((x) => x.geom), l.path), { colour: l.colour }))));
   }, [metro, net, ready, journey, mFrom, mTo, station, lang]);
+
+  // ---------- metro: live trains ----------
+  // Arrivals for the station in focus: the open station card, or else the
+  // boarding station of a planned journey (and then only its direction).
+  const etaFocus = metro && active && !nav ? (station ?? (!mPick ? journey?.legs[0]?.from : undefined) ?? null) : null;
+  const etaToward = !station ? journey?.legs[0]?.toward : undefined;
+  const arrivals = useArrivals(etaFocus?.name ?? null);
+  // Every train on the network, from the slow sweep (lib/metroLive.ts), kept
+  // in a ref: readings arrive about once a second and need no re-render, the
+  // markers read them on their own tick.
+  const sweepRef = useRef(new Map<number, Sighting[]>());
+  const sweeping = metro && active && online && !!net;
+  useEffect(() => {
+    if (!sweeping || !net) return;
+    const ctl = new AbortController();
+    const seen = sweepRef.current;
+    void sweep(net, (id, rows, at) => seen.set(id, sightings(net, net.stations[id], rows, at)), ctl.signal);
+    return () => ctl.abort();
+  }, [sweeping, net]);
+
+  const trainsRef = useRef<TrainMarkers | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const tm = (trainsRef.current ??= new TrainMarkers(map));
+    if (!net || !metro || !active || nav) return tm.run(null);
+    const rows = arrivals.rows;
+    const focus = etaFocus && Array.isArray(rows) ? sightings(net, etaFocus, rows, arrivals.at, etaToward) : [];
+    const seen = sweepRef.current;
+    tm.run(
+      () => {
+        const now = Date.now();
+        // Readings older than three minutes have drifted too far to trust.
+        const network = [...seen.values()].flat().filter((x) => now - x.at < 180_000);
+        return placeAll(net, network, focus, now);
+      },
+      (m) => (m === 0 ? t('etaArriving') : `${nf(lang, m)} ${t('etaMin')}`),
+    );
+    return () => tm.run(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrivals, net, ready, metro, active, nav, etaFocus?.id, etaToward?.id, lang]);
 
   // Map and Metro share one map, so the switch is a soft cross-fade of the
   // map and a rise of the panel rather than the layers snapping over.
@@ -1176,21 +1267,59 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metro]);
 
-  // Entering metro mode frames the whole network once.
+  // Metro is a diagram over a quiet city: flat, north up, framed on the
+  // network and kept near it, with a little room to zoom out and pan round
+  // the edges. Leaving restores the map's own limits.
   const framed = useRef(false);
+  const mapLimits = useRef<{ bounds: ReturnType<MlMap['getMaxBounds']>; minZoom: number; maxZoom: number } | null>(null);
   useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
     if (!metro) {
       framed.current = false;
+      const saved = mapLimits.current;
+      if (saved) {
+        mapLimits.current = null;
+        map.setMinZoom(saved.minZoom);
+        map.setMaxZoom(saved.maxZoom);
+        map.setMaxBounds(saved.bounds);
+        map.dragRotate.enable();
+        map.touchZoomRotate.enableRotation();
+        map.touchPitch.enable();
+      }
       return;
     }
-    if (!net || !mapRef.current || framed.current || !net.stations.length) return;
+    if (!net || framed.current || !net.stations.length) return;
     framed.current = true;
-    mapRef.current.fitBounds(coreBox(net.stations.map((s) => s.at)), { padding: framePadding(), duration: ms(600) });
+    mapLimits.current = { bounds: map.getMaxBounds(), minZoom: map.getMinZoom(), maxZoom: map.getMaxZoom() };
+    map.dragRotate.disable();
+    map.touchZoomRotate.disableRotation();
+    map.touchPitch.disable();
+    map.setMaxBounds(null);
+    map.setMaxZoom(15.5);
+    const all = bbox(net.stations.map((s) => s.at));
+    map.jumpTo({ bearing: 0, pitch: 0 }); // fires its own moveend at once, before the lock below
+    map.once('moveend', () => {
+      if (!metroRef.current) return;
+      // Breathing room rather than a hard frame: almost a zoom level out
+      // and a margin round the network, but never off into the rest of the
+      // country. The bounds must hold the zoomed-out view, or MapLibre
+      // would refuse that zoom.
+      const v = map.getBounds();
+      const [cx, cy] = [(v.getWest() + v.getEast()) / 2, (v.getSouth() + v.getNorth()) / 2];
+      const [hw, hh] = [(v.getEast() - v.getWest()) * 1.1, (v.getNorth() - v.getSouth()) * 1.1];
+      map.setMinZoom(map.getZoom() - 0.8);
+      map.setMaxBounds([
+        [Math.min(cx - hw, all[0][0] - 0.05), Math.min(cy - hh, all[0][1] - 0.05)],
+        [Math.max(cx + hw, all[1][0] + 0.05), Math.max(cy + hh, all[1][1] + 0.05)],
+      ]);
+    });
+    map.fitBounds(coreBox(net.stations.map((s) => s.at)), { padding: framePadding(), duration: ms(600) });
   }, [metro, net]);
 
   useEffect(() => {
     if (!journey || !mapRef.current) return;
-    mapRef.current.fitBounds(bbox(journey.legs.flatMap((l) => l.path)), { padding: framePadding(true), maxZoom: 14.5, duration: ms(600) });
+    mapRef.current.fitBounds(bbox(journey.legs.flatMap((l) => l.path)), { padding: framePadding(true), maxZoom: 13, duration: ms(600) });
   }, [journey]);
 
   const stationHits = useMemo(() => {
@@ -1536,6 +1665,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   } else if (!nav && metro && station && net) {
     sheetLabel = stationLabel(station);
     const dist = here ? distM(here, station.at) : null;
+    const isFav = favs.includes(station.name);
     sheet = (
       <div className="sh-card">
         <div className="sh-head">
@@ -1549,16 +1679,23 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
           </div>
           <button type="button" className="icon-btn" onClick={() => setStation(null)} aria-label={t('cancel')}><X aria-hidden /></button>
         </div>
-        <div className="btn-pair three">
-          <button type="button" className="btn" onClick={() => { setMFrom(station.id); setStation(null); }}><TrainFront aria-hidden /> {t('metroFromHere')}</button>
-          <button type="button" className="btn primary" onClick={() => { setMTo(station.id); setStation(null); }}><Flag aria-hidden /> {t('metroToHere')}</button>
+        {station.id === mFrom && mTo === null && (
+          <p className="trip-hint"><i className="dot from" aria-hidden /> {t('metroTapDest')}</p>
+        )}
+        <div className="btn-pair">
+          <button type="button" className={isFav ? 'btn fav on' : 'btn fav'} aria-pressed={isFav} onClick={() => setFavs((f) => toggleFav(f, station.name))}>
+            <Star aria-hidden /> {t(isFav ? 'favSaved' : 'favAdd')}
+          </button>
           <button type="button" className="btn" onClick={() => walkTo(station)}><WalkIcon aria-hidden /> {t('metroWalk')}</button>
         </div>
-        <MetroArrivals name={station.name} label={(fa) => towardLabel(fa)} />
+        <MetroArrivals arrivals={arrivals} label={(fa) => towardLabel(fa)} />
       </div>
     );
   } else if (!nav && metro) {
     sheetLabel = t('metroTitle');
+    const leg0 = journey?.legs[0];
+    const nextRow = leg0 && Array.isArray(arrivals.rows) ? arrivals.rows.find((r) => sameStation(r.toward, leg0.toward.name)) : undefined;
+    const nextTrain = nextRow ? minutesLeft(nextRow.minutes, arrivals.at) : null;
     const pickRow = (which: 'from' | 'to') => {
       const id = which === 'from' ? mFrom : mTo;
       const s = id !== null && net ? net.stations[id] : null;
@@ -1627,6 +1764,9 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
                         <strong>{i === 0 ? t('metroRide') : `${t('metroChange')} ${stationLabel(l.from)}`}</strong>
                         <span className="muted">{stationLabel(l.from)} → {stationLabel(l.to)}</span>
                         <span className="muted small">{t('metroToward')} {stationLabel(l.toward)}{sep(lang)}{nf(lang, l.stops)} {t('metroStops')}</span>
+                        {i === 0 && nextTrain !== null && (
+                          <span className="next-train"><Radio aria-hidden className="inline" /> {t('etaNext')}{sep(lang)}<span className="num">{nextTrain === 0 ? t('etaArriving') : `${nf(lang, nextTrain)} ${t('etaMin')}`}</span></span>
+                        )}
                       </div>
                     </li>
                   ))}
@@ -1634,6 +1774,39 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
               </div>
             )}
             {!mPick && mFrom !== null && mTo !== null && !journey && <p className="muted">{t('metroNoRoute')}</p>}
+            {!mPick && !journey && (
+              <>
+                <p className="trip-hint"><i className={`dot ${mFrom === null ? 'from' : 'to'}`} aria-hidden /> {t(mFrom === null ? 'metroTapStart' : 'metroTapDest')}</p>
+                {favs.length > 0 && (
+                  <section className="metro-saved">
+                    <p className="label">{t('metroFavs')}</p>
+                    <div className="fav-chips">
+                      {favs.map((n) => byName(n)).filter((x): x is Station => !!x).map((x) => (
+                        <button key={x.id} type="button" className="fav-chip" onClick={() => stationTapRef.current(String(x.id))}>
+                          <Star aria-hidden className="inline" /> {stationLabel(x)}
+                          <span className="mini-lines">{x.lines.map((l) => <i key={l} style={{ background: net.colourOf(l) }} />)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
+                {trips.length > 0 && (
+                  <section className="metro-saved">
+                    <p className="label">{t('metroRecent')}</p>
+                    <ul className="hits recent-list">
+                      {trips.map((tr) => ({ a: byName(tr.from), b: byName(tr.to) })).filter((x): x is { a: Station; b: Station } => !!x.a && !!x.b).map(({ a, b }) => (
+                        <li key={`${a.id}-${b.id}`}>
+                          <button type="button" onClick={() => { setStation(null); setMFrom(a.id); setMTo(b.id); }}>
+                            <History aria-hidden className="inline" />
+                            <span className="hit-name">{stationLabel(a)} → {stationLabel(b)}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+              </>
+            )}
             <p className="muted small">{t('metroBrtNote')}</p>
           </>
         )}

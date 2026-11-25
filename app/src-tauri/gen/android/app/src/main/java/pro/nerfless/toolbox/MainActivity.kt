@@ -1,9 +1,12 @@
 package pro.nerfless.toolbox
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.net.Uri
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
 import android.os.Bundle
 import android.webkit.JavascriptInterface
@@ -51,6 +54,17 @@ class MainActivity : TauriActivity() {
       @JavascriptInterface fun locationOn(): Boolean {
         val lm = getSystemService(LOCATION_SERVICE) as LocationManager
         return LocationManagerCompat.isLocationEnabled(lm)
+      }
+      // What Android itself says is granted: "fine", "coarse" or "none". The
+      // geolocation plugin's own check rejects outright while the location
+      // switch is off, which made a granted permission look refused.
+      @JavascriptInterface fun locationGranted(): String {
+        val ok = { p: String -> ContextCompat.checkSelfPermission(this@MainActivity, p) == PackageManager.PERMISSION_GRANTED }
+        return when {
+          ok(Manifest.permission.ACCESS_FINE_LOCATION) -> "fine"
+          ok(Manifest.permission.ACCESS_COARSE_LOCATION) -> "coarse"
+          else -> "none"
+        }
       }
       @JavascriptInterface fun openLocationSettings() {
         runOnUiThread { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }

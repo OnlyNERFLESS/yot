@@ -20,7 +20,7 @@ export type ErrorHandler = (message: string, problem: LocProblem) => void;
 
 export const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
 
-type Sys = { YotSys?: { locationOn(): boolean; openLocationSettings(): void; openAppSettings(): void } };
+type Sys = { YotSys?: { locationOn(): boolean; locationGranted?(): string; openLocationSettings(): void; openAppSettings(): void } };
 const sys = () => (window as unknown as Sys).YotSys;
 
 /** Android: is the phone's own location switch on? (true where unknown) */
@@ -29,8 +29,15 @@ export const openPhoneLocationSettings = () => sys()?.openLocationSettings();
 export const openAppPermissionSettings = () => sys()?.openAppSettings();
 
 /** Android: ask for location; "Approximate" counts as yes. Returns whether
- * any location permission is now granted and whether it is precise. */
+ * any location permission is now granted and whether it is precise.
+ *
+ * Android's own answer comes first. The plugin's permission calls reject
+ * whenever the phone's location switch is off, so asking the plugin alone
+ * reported a granted permission as refused and sent people to the app's
+ * permission page for nothing. */
 export async function requestLocationPermission(): Promise<{ granted: boolean; precise: boolean }> {
+  const native = sys()?.locationGranted?.();
+  if (native === 'fine' || native === 'coarse') return { granted: true, precise: native === 'fine' };
   const geo = await import('@tauri-apps/plugin-geolocation');
   let perm = await geo.checkPermissions();
   const ok = (p: typeof perm) => p.location === 'granted' || p.coarseLocation === 'granted';
@@ -45,22 +52,33 @@ export async function watch(onFix: FixHandler, onError: ErrorHandler): Promise<(
     // onError: a rejected promise used to vanish and the map just sat waiting.
     try {
       const geo = await import('@tauri-apps/plugin-geolocation');
+      // The switch first: with it off, no permission prompt can help, and the
+      // plugin rejects its permission calls anyway.
+      if (!locationSwitchOn()) {
+        onError('Location is switched off on this phone', 'off');
+        return () => {};
+      }
       const { granted, precise } = await requestLocationPermission();
       if (!granted) {
         onError('Location permission was not granted', 'denied');
         return () => {};
       }
-      // Permission alone gives nothing while the phone's location is off:
-      // say so instead of waiting forever for a fix that cannot come.
-      if (!locationSwitchOn()) {
-        onError('Location is switched off on this phone', 'off');
-        return () => {};
-      }
-      const id = await geo.watchPosition({ enableHighAccuracy: precise, timeout: 15_000, maximumAge: 0 }, (pos, err) => {
+      // The last known position, if recent, puts the dot down at once while
+      // the watch below waits for a fresh fix.
+      let live = false;
+      void geo.getCurrentPosition({ enableHighAccuracy: false, maximumAge: 5 * 60_000, timeout: 10_000 }).then((pos) => {
+        if (live) return; // a fresh fix already arrived
+        const c = pos.coords;
+        onFix({ lng: c.longitude, lat: c.latitude, accuracy: c.accuracy, speed: null, heading: null, t: pos.timestamp });
+      }, () => undefined);
+      // The plugin uses `timeout` as the update interval, not as a timeout:
+      // at 15 s the first fix waited up to 15 s and navigation moved in jumps.
+      const id = await geo.watchPosition({ enableHighAccuracy: precise, timeout: 1_000, maximumAge: 0 }, (pos, err) => {
         if (err || !pos) {
           onError(String(err ?? 'no position'), locationSwitchOn() ? 'error' : 'off');
           return;
         }
+        live = true;
         const c = pos.coords;
         onFix({ lng: c.longitude, lat: c.latitude, accuracy: c.accuracy, speed: c.speed ?? null, heading: c.heading ?? null, t: pos.timestamp });
       });

@@ -34,6 +34,9 @@ const key = (name: string) => {
   return ALIASES[k] ?? k;
 };
 
+/** Whether two spellings (OSM's, the service's) name the same station. */
+export const sameStation = (a: string, b: string) => key(a) === key(b);
+
 let byName: Map<string, number[]> | null = null;
 /** The service's station IDs for a station name (several at interchanges). */
 export function etaIdsFor(name: string): number[] {

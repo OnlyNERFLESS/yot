@@ -1970,3 +1970,79 @@ input[type='checkbox']:checked { background: var(--accent); border-color: var(--
 @keyframes arr-pulse { 50% { opacity: 0.45; } }
 .arr-skel { height: 40px; border-radius: 12px; background: var(--raised); opacity: 0.7; }
 @media (prefers-reduced-motion: reduce) { .arr-list li.now .arr-min { animation: none; } }
+
+/* ---------- Live metro trains (map/trains.ts): DOM markers over the map ----------
+   Placed by transform every frame; everything that animates is transform or
+   opacity, so the compositor carries it. */
+.train-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.train { position: absolute; left: 0; top: 0; width: 0; height: 0; will-change: transform; }
+.train-badge {
+  position: absolute; left: -15px; top: -15px; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--lc); border: 2.5px solid #fff;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.38), 0 0 0 5px color-mix(in srgb, var(--lc) 28%, transparent);
+}
+.train-pulse { display: none; position: absolute; left: -15px; top: -15px; width: 30px; height: 30px; border-radius: 50%; background: var(--lc); opacity: 0; }
+/* Only the trains coming to your station pulse; dozens pulsing would be noise. */
+.train.focus .train-pulse { display: block; animation: train-pulse 2s cubic-bezier(0.2, 0.6, 0.3, 1) infinite; }
+.train-min:empty { display: none; }
+.train.focus .train-badge { width: 32px; height: 32px; left: -16px; top: -16px; }
+/* Network trains stay smaller than the ones coming to your station, so they
+   leave the station names readable when zoomed in. */
+.train:not(.focus) .train-badge { width: 22px; height: 22px; left: -11px; top: -11px; border-width: 2px; box-shadow: 0 1px 4px rgb(0 0 0 / 0.35); }
+.train:not(.focus) .train-badge svg { width: 12px; height: 12px; }
+.train:not(.focus) .train-dir::before, .train:not(.focus) .train-dir::after { translate: 0 -16px; }
+/* The whole network in view: every train small, a coloured bead with a white rim. */
+.train-layer.compact .train:not(.focus) .train-badge { width: 15px; height: 15px; left: -7.5px; top: -7.5px; border-width: 2px; box-shadow: 0 1px 3px rgb(0 0 0 / 0.4); }
+.train-layer.compact .train:not(.focus) .train-badge svg { display: none; }
+.train-layer.compact .train:not(.focus) .train-dir { scale: 0.7; }
+.train-layer.compact .train:not(.focus) .train-dir::before, .train-layer.compact .train:not(.focus) .train-dir::after { translate: 0 -15px; }
+@keyframes train-pulse { from { transform: scale(1); opacity: 0.45; } to { transform: scale(2.3); opacity: 0; } }
+/* The arrow rides the rim, rotated to the direction of travel. */
+.train-dir { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; }
+.train-dir::before {
+  content: ''; position: absolute; inset: 0; translate: 0 -21px;
+  background: #fff; clip-path: polygon(50% 0, 100% 85%, 50% 62%, 0 85%);
+}
+.train-dir::after {
+  content: ''; position: absolute; inset: 2.5px 3px 1.5px; translate: 0 -21px;
+  background: var(--lc); clip-path: polygon(50% 0, 100% 85%, 50% 62%, 0 85%);
+}
+.train-min {
+  position: absolute; left: 21px; top: -11px; white-space: nowrap;
+  padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 18px;
+  background: rgb(10 13 12 / 0.86); color: #f2f5f3; box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
+}
+[data-theme='light'] .train-min { background: rgb(255 255 255 / 0.94); color: #070908; }
+:root[lang='fa'] .train-min { left: auto; right: 21px; }
+@media (prefers-reduced-motion: reduce) { .train-pulse { animation: none; } }
+
+/* ---------- Glass panels on the map (Map and Metro) ----------
+   The sheet lets the map show through, softly blurred, in both themes. Its
+   own background is replaced outright: the shared panel rule paints a rim
+   gradient under the panel colour, which a translucent panel would expose. */
+.gmap .sheet, .gmap .sheet.snap-peek, .gmap .sheet.snap-half, .gmap .sheet.snap-full, .gmap .sheet.snap-pick {
+  background: linear-gradient(155deg, rgb(22 219 101 / 0.08), transparent 42%), rgb(6 12 9 / 0.66);
+  border: 1px solid rgb(255 255 255 / 0.09); border-bottom: 0;
+  backdrop-filter: blur(18px) saturate(1.4);
+  --raised: rgb(255 255 255 / 0.06);
+}
+[data-theme='light'] .gmap .sheet, [data-theme='light'] .gmap .sheet.snap-peek, [data-theme='light'] .gmap .sheet.snap-half,
+[data-theme='light'] .gmap .sheet.snap-full, [data-theme='light'] .gmap .sheet.snap-pick {
+  background: linear-gradient(160deg, rgb(22 219 101 / 0.07), transparent 38%), rgb(255 255 255 / 0.66);
+  border-color: rgb(5 140 66 / 0.16);
+  --raised: rgb(255 255 255 / 0.55);
+}
+.gmap .sheet .btn:not(.primary), .gmap .sheet .ep, .gmap .sheet .searchbox { background-color: var(--raised); }
+
+/* ---------- Metro: tap-to-plan hint, favourites, recent trips ---------- */
+.trip-hint { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; color: var(--text-dim); }
+.trip-hint .dot { position: static; flex: none; }
+.metro-saved { display: grid; gap: 8px; }
+.metro-saved .label { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.fav-chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.fav-chip {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px;
+  border-radius: 999px; border: 1px solid var(--line-strong); background: var(--raised); font-size: 14px;
+}
+.fav-chip svg { width: 15px; height: 15px; color: #f5b70a; fill: #f5b70a; }
+.btn.fav.on svg { color: #f5b70a; fill: #f5b70a; }
