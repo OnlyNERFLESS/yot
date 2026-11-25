@@ -9,7 +9,7 @@ import {
 import { useApp } from '../app/ctx';
 import { api, type Hit, type LngLat, type Mode, type Route } from '../lib/api';
 import { fmtClock, fmtDistance, fmtDuration, humanError, instruction, kindLabel, nf, sep, type Key } from '../lib/i18n';
-import { isMobile, watch, type Fix } from '../lib/location';
+import { isMobile, openAppPermissionSettings, openPhoneLocationSettings, requestLocationPermission, watch, type Fix, type LocProblem } from '../lib/location';
 import { distM, isOffRoute, pointAlong, prepare, progress, type Prepared, type Progress } from '../lib/nav';
 import { findRoutes } from '../lib/routing';
 import { googleTiles, inIran } from '../lib/online';
@@ -26,6 +26,7 @@ import { startRouteScan } from '../map/routeScan';
 import { Puck } from '../map/puck';
 import { SelPin } from '../map/selpin';
 import { StreetView } from '../ui/StreetView';
+import { MetroArrivals } from '../ui/MetroArrivals';
 import { buildNetwork, type Journey, type Network, type Station } from '../lib/metro';
 import { fold } from '../lib/fold';
 import { placeMessage, shareText } from '../lib/share';
@@ -124,6 +125,9 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
 
   const [fix, setFix] = useState<Fix | null>(null);
   const [locErr, setLocErr] = useState<string | null>(null);
+  const [locProblem, setLocProblem] = useState<LocProblem | null>(null);
+  // Sent to a settings screen: retry the moment the person comes back.
+  const awaitingSettings = useRef(false);
   const [follow, setFollow] = useState(false);
   const [locTry, setLocTry] = useState(0); // bump to ask for location again
   const [locAsk, setLocAsk] = useState(false);
@@ -326,8 +330,12 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       (f) => {
         setFix(f);
         setLocErr(null);
+        setLocProblem(null);
       },
-      (m) => setLocErr(m),
+      (m, p) => {
+        setLocErr(m);
+        setLocProblem(p);
+      },
     ).then((s) => (alive ? (stop = s) : s()));
     return () => {
       alive = false;
@@ -346,12 +354,17 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   useEffect(() => {
     if (fix) setLocAsk(false);
   }, [fix]);
-  // Windows: coming back from Location settings retries on its own. Not on
-  // phones, where retrying re-opens the permission dialog in a loop.
+  // Coming back from a settings screen retries on its own. On phones only
+  // after the app itself sent the person there: an unprompted retry would
+  // re-open the permission dialog in a loop.
   useEffect(() => {
-    if (!locErr || isMobile) return;
+    if (!locErr) return;
     const again = () => {
-      if (document.visibilityState === 'visible') setLocTry((n) => n + 1);
+      if (document.visibilityState !== 'visible') return;
+      if (isMobile && !awaitingSettings.current) return;
+      awaitingSettings.current = false;
+      askedLoc.current = false; // if it still fails, explain again
+      setLocTry((n) => n + 1);
     };
     window.addEventListener('focus', again);
     document.addEventListener('visibilitychange', again);
@@ -862,12 +875,33 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     if (locErr) setLocAsk(true);
     else setNote({ text: t('locatingHint'), kind: 'info' });
   };
-  const allowLocation = () => {
+  /** "Allow" must always lead somewhere: the permission prompt, or the
+   * settings screen that can actually fix it when the prompt cannot. */
+  const allowLocation = async () => {
     setLocAsk(false);
-    if (isMobile) {
-      setLocErr(null);
-      setLocTry((n) => n + 1);
-    } else void api.openLocationSettings().catch(warn);
+    if (!isMobile) {
+      void api.openLocationSettings().catch(warn);
+      return;
+    }
+    if (locProblem === 'off') {
+      // The phone's location switch is off: no permission prompt can help.
+      awaitingSettings.current = true;
+      openPhoneLocationSettings();
+      return;
+    }
+    const { granted } = await requestLocationPermission().catch(() => ({ granted: false }));
+    if (!granted) {
+      // Refused before with "don't ask again": Android shows no prompt any
+      // more, so open the app's own permission page instead of doing nothing.
+      awaitingSettings.current = true;
+      openAppPermissionSettings();
+      return;
+    }
+    askedLoc.current = false;
+    setLocErr(null);
+    setLocProblem(null);
+    setNote({ text: t('locatingHint'), kind: 'info' });
+    setLocTry((n) => n + 1);
   };
   const useMyLocation = () => {
     if (!here) return locateMe();
@@ -1202,6 +1236,12 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   };
 
   const stationLabel = (s: Station) => cleanName(lang === 'en' ? s.name_en || s.name : s.name);
+  /** A terminus named in Persian by the arrivals service, in the UI's language. */
+  const towardLabel = (fa: string) => {
+    const k = fold(cleanName(fa));
+    const s = net?.stations.find((x) => fold(cleanName(x.name)) === k);
+    return s ? stationLabel(s) : fa;
+  };
 
   // ---------- bottom sheet drag (phones) ----------
   const drag = useRef<{ y: number; snap: Snap } | null>(null);
@@ -1514,6 +1554,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
           <button type="button" className="btn primary" onClick={() => { setMTo(station.id); setStation(null); }}><Flag aria-hidden /> {t('metroToHere')}</button>
           <button type="button" className="btn" onClick={() => walkTo(station)}><WalkIcon aria-hidden /> {t('metroWalk')}</button>
         </div>
+        <MetroArrivals name={station.name} label={(fa) => towardLabel(fa)} />
       </div>
     );
   } else if (!nav && metro) {
@@ -1789,11 +1830,11 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
             <span className="loc-ask-ic" aria-hidden><LocateFixed /></span>
             <h2 id="loc-ask-title">{t('locAskTitle')}</h2>
             <p>{t('locAskWhy')}</p>
-            <p className="muted">{t(isMobile ? 'locAskPhone' : 'locAskPc')}</p>
+            <p className="muted">{t(!isMobile ? 'locAskPc' : locProblem === 'off' ? 'locOffPhone' : locProblem === 'denied' ? 'locDeniedPhone' : 'locAskPhone')}</p>
             <footer className="qa-foot">
               <button type="button" className="btn" onClick={() => setLocAsk(false)}>{t('notNow')}</button>
-              <button type="button" className="btn primary" onClick={allowLocation}>
-                <LocateFixed aria-hidden /> {t(isMobile ? 'locAllow' : 'locOpenSettings')}
+              <button type="button" className="btn primary" onClick={() => void allowLocation()}>
+                <LocateFixed aria-hidden /> {t(!isMobile ? 'locOpenSettings' : locProblem === 'off' ? 'locOpenPhoneSettings' : 'locAllow')}
               </button>
             </footer>
           </section>

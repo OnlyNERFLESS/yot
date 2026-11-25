@@ -1,6 +1,10 @@
 package pro.nerfless.toolbox
 
 import android.content.Intent
+import android.location.LocationManager
+import android.net.Uri
+import android.provider.Settings
+import androidx.core.location.LocationManagerCompat
 import android.os.Bundle
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -40,6 +44,23 @@ class MainActivity : TauriActivity() {
         }
       }
     }, "YotShare")
+    // Location help: whether the phone's location switch is on, and the two
+    // settings screens a person may need when "Allow" alone cannot fix it
+    // (location switched off, or permission refused with "don't ask again").
+    webView.addJavascriptInterface(object {
+      @JavascriptInterface fun locationOn(): Boolean {
+        val lm = getSystemService(LOCATION_SERVICE) as LocationManager
+        return LocationManagerCompat.isLocationEnabled(lm)
+      }
+      @JavascriptInterface fun openLocationSettings() {
+        runOnUiThread { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+      }
+      @JavascriptInterface fun openAppSettings() {
+        runOnUiThread {
+          startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+        }
+      }
+    }, "YotSys")
     ViewCompat.setOnApplyWindowInsetsListener(webView) { v, insets ->
       val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
       val d = resources.displayMetrics.density
