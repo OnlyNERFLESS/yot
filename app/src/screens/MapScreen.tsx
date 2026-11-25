@@ -4,7 +4,7 @@ import {
   ArrowLeftRight, Footprints as WalkIcon,
   ArrowLeft, Banknote, BedDouble, Bike, Bookmark, Box, Car, Check, CircleCheck, Clock, History, Coffee, Compass, Ellipsis, Flag,
   Footprints, Fuel, Globe, Hospital, Landmark, Layers, LayoutGrid, LocateFixed, MapPin, Navigation, Pause, Phone, Pill, Play, Satellite,
-  Search, Share2, ShoppingCart, SquareParking, TrafficCone, TrainFront, Utensils, Users, X, type LucideIcon,
+  Camera, Copy, Search, Share2, ShoppingCart, SquareParking, TrafficCone, TrainFront, Utensils, Users, X, type LucideIcon,
 } from 'lucide-react';
 import { useApp } from '../app/ctx';
 import { api, type Hit, type LngLat, type Mode, type Route } from '../lib/api';
@@ -24,8 +24,11 @@ import { addRecent, clearRecent, onRecentChange, recentList, type Recent } from 
 import { DriverView, type DriverTarget } from '../ui/DriverView';
 import { startRouteScan } from '../map/routeScan';
 import { Puck } from '../map/puck';
+import { SelPin } from '../map/selpin';
+import { StreetView } from '../ui/StreetView';
 import { buildNetwork, type Journey, type Network, type Station } from '../lib/metro';
 import { fold } from '../lib/fold';
+import { placeMessage, shareText } from '../lib/share';
 
 interface Place {
   at: LngLat;
@@ -112,6 +115,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   const el = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
   const puckRef = useRef<Puck | null>(null);
+  const selRef = useRef<SelPin | null>(null);
   const packUrl = useRef<BasePacks>({ city: null, country: null });
   const [ready, setReady] = useState(false);
   // Bumped on every style load: a theme or language swap drops added sources.
@@ -137,6 +141,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   const [card, setCard] = useState<Card | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [driver, setDriver] = useState<DriverTarget | null>(null);
+  const [sv, setSv] = useState<{ at: LngLat; title: string } | null>(null);
   const [from, setFrom] = useState<Place | null>(null); // null = my location
   const [to, setTo] = useState<Place | null>(null);
   const [mode, setMode] = useState<Mode>(settings.default_mode);
@@ -236,6 +241,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       const map = await createMap({ container: el.current, style: baseStyle(packUrl.current, flavor, lang), center: start, zoom: 11, neshanWebKey: key });
       mapRef.current = map;
       puckRef.current = new Puck(map);
+      selRef.current = new SelPin(map);
       const fence = cb ?? b;
       if (fence) {
         const padX = (fence[2] - fence[0]) * 0.15;
@@ -265,14 +271,14 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
           return;
         }
         if (metroRef.current) {
-          const st = map.queryRenderedFeatures(e.point, { layers: ['tb-metro-st', 'tb-metro-label'].filter((id) => map.getLayer(id)) })[0];
-          if (st?.properties?.key) {
+          const st = nearestFeature(map, e.point, ['tb-metro-st', 'tb-metro-label'], (x) => x.properties?.key !== undefined);
+          if (st?.properties?.key !== undefined) {
             stationTapRef.current(String(st.properties.key));
             return;
           }
         }
         const layers = ['pois', 'places_subplace', 'places_locality'].filter((id) => map.getLayer(id));
-        const f: MapGeoJSONFeature | undefined = map.queryRenderedFeatures(e.point, { layers }).find((x) => x.properties?.name);
+        const f = nearestFeature(map, e.point, layers, (x) => !!x.properties?.name);
         if (!f) {
           emptyRef.current(tapped);
           return;
@@ -286,6 +292,8 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       cancelled = true;
       puckRef.current?.remove();
       puckRef.current = null;
+      selRef.current?.remove();
+      selRef.current = null;
       mapRef.current?.remove();
       mapRef.current = null;
     };
@@ -369,9 +377,11 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       // While an end is being chosen, the centre pin is its only mark.
       ...(from && pickMode !== 'from' ? [point(from.at, { role: 'from' })] : []),
       ...(to && pickMode !== 'to' ? [point(to.at, { role: 'to' })] : []),
-      ...(card && !to && !pickMode ? [point(card.at, { role: 'to' })] : []),
     ];
     setData(map, 'tb-pins', fc(pins));
+    // The open place card is marked by the dropping pin.
+    if (card && !to && !pickMode && !nav) selRef.current?.show(card.at);
+    else selRef.current?.hide();
   }, [hits, from, to, card, nav, ready, pickMode]);
 
   // Navigation camera: tilted into a semi-3D view, heading up, the car low on
@@ -532,7 +542,18 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     if (map && !reducedMotion()) {
       try {
         map.redraw();
-        frame = map.getCanvas().toDataURL('image/jpeg', 0.82);
+        // A phone canvas is about 3x the screen in pixels; encoding all of it
+        // stalls the tap. Downscale the frozen frame first (it is only seen
+        // for a second, under the radar).
+        const c = map.getCanvas();
+        const k = Math.min(1, (isMobile ? 720 : 1400) / Math.max(c.width, c.height));
+        if (k < 1) {
+          const small = document.createElement('canvas');
+          small.width = Math.round(c.width * k);
+          small.height = Math.round(c.height * k);
+          small.getContext('2d')!.drawImage(c, 0, 0, small.width, small.height);
+          frame = small.toDataURL('image/jpeg', 0.72);
+        } else frame = c.toDataURL('image/jpeg', 0.8);
       } catch {
         frame = null;
       }
@@ -543,6 +564,8 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       return;
     }
     scanning.current = true;
+    // Phones: the popup would sit over the radar; the choice is made, close it.
+    if (isMobile) setLayersOpen(false);
     setScanFade(!sat);
     setScanImg(frame);
     if (!sat) setSatellite(false);
@@ -572,10 +595,29 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     const wrap = scanWrap.current;
     const beam = radarBeam.current;
     if (wrap && beam) {
-      // The beam must reach every corner from the centre.
-      const r = Math.ceil(Math.hypot(wrap.clientWidth, wrap.clientHeight) / 2) + 4;
+      // Wide screens: the beam reaches every corner from the centre. Phones:
+      // a compact radar disc in the middle; a beam the size of the whole
+      // screen read as a wall of green on a small display.
+      const r = isMobile
+        ? Math.round(Math.min(wrap.clientWidth, wrap.clientHeight) * 0.4)
+        : Math.ceil(Math.hypot(wrap.clientWidth, wrap.clientHeight) / 2) + 4;
       Object.assign(beam.style, { width: `${2 * r}px`, height: `${2 * r}px`, margin: `${-r}px 0 0 ${-r}px` });
-      wrap.style.setProperty('--ring', `${Math.max(70, Math.round(r / 5))}px`);
+      wrap.style.setProperty('--ring', `${isMobile ? Math.round(r / 3) : Math.max(70, Math.round(r / 5))}px`);
+      wrap.style.setProperty('--radar-r', `${r}px`);
+      wrap.classList.toggle('compact', isMobile);
+      if (isMobile) {
+        // Centre the disc in the map a person can actually see: between the
+        // search bar and the top of the sheet, not behind the sheet.
+        const box = wrap.getBoundingClientRect();
+        const sheetTop = wrap.parentElement?.querySelector('.sheet')?.getBoundingClientRect().top ?? box.bottom;
+        const topBar = wrap.parentElement?.querySelector('.topbar')?.getBoundingClientRect().bottom ?? box.top;
+        const cy = Math.max(r + 8, Math.min(box.height - r - 8, (topBar + Math.min(sheetTop, box.bottom)) / 2 - box.top));
+        wrap.style.setProperty('--cy', `${Math.round(cy)}px`);
+        const fit = Math.max(60, Math.min(r, (Math.min(sheetTop, box.bottom) - topBar) / 2 - 12));
+        Object.assign(beam.style, { width: `${2 * fit}px`, height: `${2 * fit}px`, margin: `${-fit}px 0 0 ${-fit}px` });
+        wrap.style.setProperty('--radar-r', `${Math.round(fit)}px`);
+        wrap.style.setProperty('--ring', `${Math.round(fit / 3)}px`);
+      }
     }
     const turn = () => beam?.animate([{ transform: 'rotate(0deg)' }, { transform: 'rotate(360deg)' }], { duration: TURN_MS, easing: 'linear' }).finished.catch(() => undefined);
     // Sweep the frozen city until the new view has loaded.
@@ -611,15 +653,30 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     await Promise.all([
       wave?.animate([{ transform: 'scale(0)' }, { transform: 'scale(1)' }], { duration: PING_MS, easing: ease, fill: 'forwards' }).finished.catch(() => undefined),
       wave?.animate([{ opacity: 1 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }], { duration: PING_MS, fill: 'forwards' }).finished.catch(() => undefined),
-      scanOld.current?.animate(
-        [{ '--reveal': '0px' }, { '--reveal': `${R + 70}px` }] as Keyframe[],
-        { duration: PING_MS, easing: ease, fill: 'forwards' },
-      ).finished.catch(() => undefined),
+      // Phones: the mask redraw is a full-screen repaint every frame, so the
+      // frame fades (composited) while the ring rolls out instead.
+      isMobile
+        ? scanOld.current?.animate([{ opacity: 1 }, { opacity: 1, offset: 0.25 }, { opacity: 0 }], { duration: PING_MS, easing: 'ease-out', fill: 'forwards' }).finished.catch(() => undefined)
+        : scanOld.current?.animate(
+          [{ '--reveal': '0px' }, { '--reveal': `${R + 70}px` }] as Keyframe[],
+          { duration: PING_MS, easing: ease, fill: 'forwards' },
+        ).finished.catch(() => undefined),
     ]);
     void turning;
     setScanImg(null);
     scanning.current = false;
   };
+
+  // The fallback imagery stops at zoom 15; past about 16 it is only stretched
+  // pixels, which looks like loading stalled. Cap the zoom while it is shown.
+  const coarseSat = satellite && !googleOk && SAT_SOURCES[satSrc].maxzoom < 17;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    map.setMaxZoom(coarseSat ? SAT_SOURCES[satSrc].maxzoom + 1.5 : 19);
+    if (coarseSat) setNote({ text: t('satLowDetail'), kind: 'info' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coarseSat, ready]);
 
   // Satellite needs the internet; drop back to the offline map when it goes.
   useEffect(() => {
@@ -936,6 +993,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
   // Android Back: close the newest thing first, one step per press.
   useBack(() => {
     if (!active) return false;
+    if (sv) return setSv(null), true;
     if (locAsk) return setLocAsk(false), true;
     if (driver) return setDriver(null), true;
     if (layersOpen) return setLayersOpen(false), true;
@@ -1010,6 +1068,18 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
     await api.placeSave({ name, lat: at[1], lon: at[0], note: '' });
     setPlaceName(null);
     setNote({ text: `${t('savePlace')}: ${name}`, kind: 'ok' });
+  };
+
+  const sharePlace = async (c: Card) => {
+    const how = await shareText(c.name || t('droppedPin'), placeMessage({ fa: c.fa, en: c.en, line: c.faLine, at: c.at }));
+    if (how === 'copied') setNote({ text: t('copied'), kind: 'ok' });
+  };
+  const shareMine = async () => {
+    if (!fix) return locateMe();
+    const at: LngLat = [fix.lng, fix.lat];
+    const label = await roadLabel(at);
+    const how = await shareText(t('myLocationTitle'), placeMessage({ fa: label?.fa, en: label?.en, at }));
+    if (how === 'copied') setNote({ text: t('copied'), kind: 'ok' });
   };
 
   const copyCard = (c: Card) => {
@@ -1194,6 +1264,11 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
 
   // Searching for an endpoint swaps the pick sheet for the result list.
   const pickSearch = !!pickMode && query.trim().length >= 2;
+  // What the sheet is showing; a change replays its entrance, so moving from
+  // results to a place to a route reads as one sheet changing page.
+  const sheetMode = pickMode && !pickSearch ? 'pick' : arrived ? 'arrived' : to && !pickSearch ? 'plan'
+    : card ? `card:${card.at[0]},${card.at[1]}` : catsOpen ? 'cats' : hits.length > 0 || listTitle ? 'list'
+    : metro && station ? `st:${station.id}` : metro ? 'metro' : 'idle';
   let sheet: ReactNode = null;
   let sheetLabel = t('route');
   if (!nav && pickMode && !pickSearch) {
@@ -1320,7 +1395,10 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
               {here && <>{sep(lang)}<span className="num">{fmtDistance(lang, distM(here, card.at))}</span></>}
             </p>
           </div>
-          <button type="button" className="icon-btn" onClick={() => setCard(null)} aria-label={t('cancel')}><X aria-hidden /></button>
+          {/* From a result list the card goes back to it; otherwise it closes. */}
+          <button type="button" className="icon-btn" onClick={() => setCard(null)} aria-label={t('cancel')}>
+            {hits.length > 0 ? (lang === 'fa' ? <ArrowLeft aria-hidden style={{ transform: 'scaleX(-1)' }} /> : <ArrowLeft aria-hidden />) : <X aria-hidden />}
+          </button>
         </div>
         <div className="acts">
           <button type="button" className="act primary" onClick={() => directionsTo(card)}>
@@ -1344,7 +1422,11 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
         {moreOpen && (
           <div className="card-more">
             {phone && <a className="btn" href={`tel:${phone}`}><Phone aria-hidden /> {t('call')}</a>}
-            <button type="button" className="btn" onClick={() => copyCard(card)}><Share2 aria-hidden /> {t('share')}</button>
+            <button type="button" className="btn" onClick={() => void sharePlace(card)}><Share2 aria-hidden /> {t('shareLocation')}</button>
+            <button type="button" className="btn" onClick={() => copyCard(card)}><Copy aria-hidden /> {t('share')}</button>
+            {settings.has_mapillary_token && (
+              <button type="button" className="btn" onClick={() => setSv({ at: card.at, title: card.name || fmtLL(card.at) })}><Camera aria-hidden /> {t('streetView')}</button>
+            )}
           </div>
         )}
         {placeName !== null && (
@@ -1495,7 +1577,7 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
             )}
             {!mPick && journey && (
               <div className="journey">
-                <p className="journey-sum"><span className="num big">{fmtDuration(lang, journey.minutes * 60)}</span><span className="muted">{nf(lang, journey.stops)} {t('metroStops')}{sep(lang)}{nf(lang, journey.legs.length - 1)} ×</span></p>
+                <p className="journey-sum"><span className="num big">{fmtDuration(lang, journey.minutes * 60)}</span><span className="muted">{nf(lang, journey.stops)} {t('metroStops')}{sep(lang)}{journey.legs.length > 1 ? `${nf(lang, journey.legs.length - 1)} ${t(journey.legs.length === 2 ? 'metroChanges1' : 'metroChangesN')}` : t('metroDirect')}</span></p>
                 <ol className="legs">
                   {journey.legs.map((l, i) => (
                     <li key={i} style={{ '--lc': l.colour } as React.CSSProperties}>
@@ -1529,6 +1611,11 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
           )}
           {noPack && <span className="warn">{t('noPacks')}</span>}
         </p>
+        {fix && (
+          <button type="button" className="btn share-mine" onClick={() => void shareMine()}>
+            <Share2 aria-hidden /> {t('shareMine')}
+          </button>
+        )}
         <div className="recent">
           <div className="recent-head">
             <p className="sh-title"><History aria-hidden className="inline" /> {t('recentSearches')}</p>
@@ -1690,11 +1777,12 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
               <i aria-hidden />
             </button>
           )}
-          <div className="sheet-body">{sheet}</div>
+          <div className="sheet-body" key={sheetMode}>{sheet}</div>
         </section>
       )}
 
       {driver && <DriverView target={driver} onClose={() => setDriver(null)} />}
+      {sv && <StreetView at={sv.at} title={sv.title} onClose={() => setSv(null)} />}
       {locAsk && (
         <div className="qa-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) setLocAsk(false); }}>
           <section className="qa loc-ask" role="dialog" aria-modal="true" aria-labelledby="loc-ask-title">
@@ -1713,6 +1801,28 @@ export function MapScreen({ active, metro = false }: { active: boolean; metro?: 
       )}
     </div>
   );
+}
+
+/** A finger covers about 40 px, a station dot or an icon 6 to 20: querying
+ * the exact tapped pixel misses most taps on a phone. Search a square around
+ * the tap (larger for touch) and take the feature nearest its centre. */
+const TAP_SLOP = isMobile ? 22 : 10;
+function nearestFeature(map: MlMap, p: { x: number; y: number }, layerIds: string[], ok: (f: MapGeoJSONFeature) => boolean): MapGeoJSONFeature | undefined {
+  const layers = layerIds.filter((id) => map.getLayer(id));
+  if (!layers.length) return undefined;
+  const box: [[number, number], [number, number]] = [[p.x - TAP_SLOP, p.y - TAP_SLOP], [p.x + TAP_SLOP, p.y + TAP_SLOP]];
+  let best: MapGeoJSONFeature | undefined;
+  let bestD = Infinity;
+  for (const f of map.queryRenderedFeatures(box, { layers })) {
+    if (!ok(f)) continue;
+    let d = 0;
+    if (f.geometry.type === 'Point') {
+      const q = map.project(f.geometry.coordinates as LngLat);
+      d = Math.hypot(q.x - p.x, q.y - p.y);
+    } else d = TAP_SLOP; // areas and labels: fine to pick, but a point beats them
+    if (d < bestD) { bestD = d; best = f; }
+  }
+  return best;
 }
 
 /** Preview drive speed in metres per second: a brisk run-through, not real time. */

@@ -34,6 +34,7 @@ const DEFAULTS: Settings = {
   has_neshan_service_key: false,
   has_neshan_web_key: false,
   has_google_key: false,
+  has_mapillary_token: false,
   ringtone: 'emerald',
 };
 

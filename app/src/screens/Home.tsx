@@ -109,7 +109,8 @@ export function Home({ active }: { active: boolean }) {
     ? `${nf(lang, j.jd)} ${JALALI_MONTHS[j.jm - 1]} ${jYear}`
     : `${j.jd} ${JALALI_MONTHS_EN[j.jm - 1]} ${j.jy}`;
   const gMonth = nowD.toLocaleDateString(loc, { month: 'long', year: 'numeric' });
-  const alt = lang === 'fa' ? nowD.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : jText;
+  // The other calendar's date, in the reader's language: ۲۵ نوامبر ۲۰۲۶ in Persian.
+  const alt = lang === 'fa' ? nowD.toLocaleDateString('fa-IR-u-ca-gregory', { day: 'numeric', month: 'long', year: 'numeric' }) : jText;
   const big = lang === 'fa' ? nf(lang, j.jd) : String(nowD.getDate());
   const bigMonth = lang === 'fa' ? `${JALALI_MONTHS[j.jm - 1]} ${jYear}` : gMonth;
 

@@ -60,19 +60,33 @@ export function parseLine(raw: string, now = new Date()): QuickItem | null {
   let time: string | null = null;
   let repeat: Repeat = { freq: 'none' };
   let high = false;
+  // "weekly" takes its weekday from the line's date, which may come later.
+  let weeklyOfDate = false;
+  // The token just consumed named a day ("fri", "tomorrow", "every monday"):
+  // a bare number right after it is an hour, as in "every Monday 9".
+  let afterDay = false;
 
   for (let i = 0; i < words.length; i++) {
+    const wasAfterDay = afterDay;
+    afterDay = false;
     const w = words[i];
     const lw = w.toLowerCase().replace(/[.,;]$/, '');
     const next = (words[i + 1] ?? '').toLowerCase().replace(/[.,;]$/, '');
 
     if (/^!+$/.test(lw)) { high = true; continue; }
+    // "!Pay invoice": a "!" stuck to the first word also marks it important.
+    if (i === 0 && /^!+\S/.test(w)) {
+      high = true;
+      words[0] = w.replace(/^!+/, '');
+      i--;
+      continue;
+    }
     // Connectors that only make sense next to a date or time.
     if ((lw === 'at' || lw === 'on' || lw === 'ساعت' || lw === 'روز') && /^(\d|[a-z]|[آ-ی])/.test(next) && (/\d/.test(next) || weekdayOf(next) !== null)) continue;
 
-    if (lw === 'today' || lw === 'امروز') { date = now; continue; }
-    if (lw === 'tomorrow' || lw === 'tmr' || lw === 'tmrw' || lw === 'فردا') { date = addDays(now, 1); continue; }
-    if (lw === 'پس‌فردا' || lw === 'پسفردا') { date = addDays(now, 2); continue; }
+    if (lw === 'today' || lw === 'امروز') { date = now; afterDay = true; continue; }
+    if (lw === 'tomorrow' || lw === 'tmr' || lw === 'tmrw' || lw === 'فردا') { date = addDays(now, 1); afterDay = true; continue; }
+    if (lw === 'پس‌فردا' || lw === 'پسفردا') { date = addDays(now, 2); afterDay = true; continue; }
     if (lw === 'tonight') { date = now; time = time ?? '20:00'; continue; }
 
     // "in 3 days", "in 2 weeks"
@@ -90,7 +104,8 @@ export function parseLine(raw: string, now = new Date()): QuickItem | null {
       continue;
     }
     if (lw === 'weekly' || ((lw === 'every' || lw === 'هر') && (next === 'week' || next === 'هفته'))) {
-      repeat = { freq: 'weekly', days: [(date ?? now).getDay()] };
+      repeat = { freq: 'weekly', days: [] };
+      weeklyOfDate = true;
       if (lw !== 'weekly') i++;
       continue;
     }
@@ -102,8 +117,10 @@ export function parseLine(raw: string, now = new Date()): QuickItem | null {
     if ((lw === 'every' || lw === 'هر') && weekdayOf(next) !== null) {
       const wd = weekdayOf(next)!;
       repeat = { freq: 'weekly', days: [wd] };
+      weeklyOfDate = false;
       date = date ?? nextWeekday(now, wd);
       i++;
+      afterDay = true;
       continue;
     }
 
@@ -112,9 +129,10 @@ export function parseLine(raw: string, now = new Date()): QuickItem | null {
       const d = nextWeekday(now, weekdayOf(next)!);
       date = d.getDay() === now.getDay() ? addDays(d, 7) : d;
       i++;
+      afterDay = true;
       continue;
     }
-    if (weekdayOf(lw) !== null) { date = nextWeekday(now, weekdayOf(lw)!); continue; }
+    if (weekdayOf(lw) !== null) { date = nextWeekday(now, weekdayOf(lw)!); afterDay = true; continue; }
 
     // Times: 14:30, 9.15, 10am, 2:30pm, 7 pm
     let m = /^(\d{1,2})[:.](\d{2})(am|pm)?$/.exec(lw);
@@ -136,7 +154,7 @@ export function parseLine(raw: string, now = new Date()): QuickItem | null {
       if (t) { time = t; if (!m) i++; continue; }
     }
     // "ساعت ۱۰" was skipped above; the bare hour lands here when it followed "at"/"ساعت".
-    if (/^\d{1,2}$/.test(lw) && /^(at|ساعت)$/.test((words[i - 1] ?? '').toLowerCase())) {
+    if (/^\d{1,2}$/.test(lw) && (wasAfterDay || /^(at|ساعت)$/.test((words[i - 1] ?? '').toLowerCase())) && monthOf(next) === null) {
       const t = hhmm(Number(lw), 0);
       if (t) { time = t; continue; }
     }
@@ -165,6 +183,8 @@ export function parseLine(raw: string, now = new Date()): QuickItem | null {
 
     keep.push(w);
   }
+
+  if (weeklyOfDate) repeat = { freq: 'weekly', days: [(date ?? now).getDay()] };
 
   // A trailing "at"/"on" left behind by a removed token reads as noise.
   while (keep.length && /^(at|on|by|-|–|ساعت)$/i.test(keep[keep.length - 1])) keep.pop();

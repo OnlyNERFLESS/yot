@@ -227,10 +227,11 @@ struct Settings {
     has_neshan_service_key: bool,
     has_neshan_web_key: bool,
     has_google_key: bool,
+    has_mapillary_token: bool,
     ringtone: String,
 }
 
-const SECRETS: &[&str] = &["neshan_service_key", "neshan_web_key", "google_key"];
+const SECRETS: &[&str] = &["neshan_service_key", "neshan_web_key", "google_key", "mapillary_token"];
 
 /// Keys compiled in by build.rs from the private .env.local. A key saved on
 /// the device still wins, so one can be rotated without a rebuild.
@@ -239,6 +240,7 @@ fn builtin_secret(name: &str) -> Option<&'static str> {
         "neshan_service_key" => option_env!("YOT_BUILTIN_NESHAN_SERVICE_KEY"),
         "neshan_web_key" => option_env!("YOT_BUILTIN_NESHAN_WEB_KEY"),
         "google_key" => option_env!("YOT_BUILTIN_GOOGLE_KEY"),
+        "mapillary_token" => option_env!("YOT_BUILTIN_MAPILLARY_TOKEN"),
         _ => None,
     }
     .filter(|v| !v.is_empty())
@@ -266,6 +268,7 @@ fn settings_get(db: State<Db>) -> R<Settings> {
         has_neshan_service_key: has("neshan_service_key")?,
         has_neshan_web_key: has("neshan_web_key")?,
         has_google_key: has("google_key")?,
+        has_mapillary_token: has("mapillary_token")?,
         ringtone: s("ringtone", "emerald")?,
     })
 }

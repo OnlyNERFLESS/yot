@@ -164,11 +164,12 @@ export interface Settings {
   has_neshan_service_key: boolean;
   has_neshan_web_key: boolean;
   has_google_key: boolean;
+  has_mapillary_token: boolean;
   ringtone: Ringtone;
 }
 export const RINGTONES = ['emerald', 'pulse', 'bloom', 'marimba', 'beacon'] as const;
 export type Ringtone = (typeof RINGTONES)[number] | 'silent';
-export type SecretName = 'neshan_service_key' | 'neshan_web_key' | 'google_key';
+export type SecretName = 'neshan_service_key' | 'neshan_web_key' | 'google_key' | 'mapillary_token';
 
 export const api = {
   packs: () => invoke<PackInfo[]>('packs_list'),

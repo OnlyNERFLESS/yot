@@ -70,7 +70,7 @@ export function UpdatePrompt() {
           )}
         </header>
         <p className="upd-ver">
-          <span className="num">YOT {u.version}</span>
+          <span className="num">Waymate {u.version}</span>
           <span className="muted">{t('updYouHave').replace('{v}', u.current)}</span>
         </p>
         {u.notes.length > 0 && (

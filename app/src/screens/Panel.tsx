@@ -1,3 +1,4 @@
+import { ConfirmButton } from '../ui/ConfirmButton';
 import { useEffect, useState } from 'react';
 import { useApp } from '../app/ctx';
 import { Bell, BellOff, Check, Play, RefreshCw } from 'lucide-react';
@@ -177,7 +178,7 @@ export function Panel({ active }: { active: boolean }) {
                     {[p.has_tiles && 'map', p.has_graph && 'routes', p.has_places && 'search'].filter(Boolean).join(sep(lang))}{sep(lang)}{nf(lang, p.size_bytes / 1e6, 1)} MB
                   </span>
                 </span>
-                <button type="button" className="danger small" onClick={() => void api.packDelete(p.name).then(load)}>{t('delete')}</button>
+                <ConfirmButton className="danger small" onConfirm={() => void api.packDelete(p.name).then(load)}>{t('delete')}</ConfirmButton>
               </li>
             ))}
           </ul>
@@ -198,7 +199,7 @@ export function Panel({ active }: { active: boolean }) {
             {places.map((p) => (
               <li key={p.id} className="between">
                 <span>{p.name} <span className="muted small" dir="ltr">{p.lat.toFixed(5)}, {p.lon.toFixed(5)}</span></span>
-                <button type="button" className="danger small" onClick={() => void api.placeDelete(p.id).then(load)}>{t('delete')}</button>
+                <ConfirmButton className="danger small" onConfirm={() => void api.placeDelete(p.id).then(load)}>{t('delete')}</ConfirmButton>
               </li>
             ))}
           </ul>

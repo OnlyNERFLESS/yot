@@ -97,10 +97,10 @@ function Shell() {
 
   return (
     <div className="shell">
-      <nav className="rail" aria-label="YOT">
-        <span className="mark" aria-label="YOT, Your Own Tasks">
+      <nav className="rail" aria-label="Waymate">
+        <span className="mark" aria-label="Waymate">
           <img src="/logo.png" alt="" width={40} height={40} />
-          <span aria-hidden>YOT</span>
+          <span aria-hidden>Waymate</span>
         </span>
         {NAV.map(({ id, label, Icon }) => (
           <button key={id} type="button" className={screen === id ? 'on' : ''} aria-current={screen === id ? 'page' : undefined} onClick={() => go(id)}>

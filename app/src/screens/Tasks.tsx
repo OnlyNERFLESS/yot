@@ -1,3 +1,4 @@
+import { ConfirmButton } from '../ui/ConfirmButton';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useBack } from '../lib/back';
 import { useApp } from '../app/ctx';
@@ -122,7 +123,7 @@ function TaskEditor({ task, onSave, onDelete }: { task: Task; onSave: (t: Task) 
       <DateField label={t('due')} value={due} onChange={setDue} />
       <div className="row">
         <button type="button" className="btn primary" onClick={() => onSave({ ...task, notes, due: due || null })}>{t('save')}</button>
-        <button type="button" className="btn danger" onClick={onDelete}>{t('delete')}</button>
+        <ConfirmButton className="btn danger" onConfirm={onDelete}>{t('delete')}</ConfirmButton>
       </div>
     </div>
   );

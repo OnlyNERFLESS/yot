@@ -12,6 +12,7 @@ import { dayKey, occurrences } from '../lib/recur';
 import { remindersChanged } from '../lib/reminderEngine';
 import { DateField } from '../ui/DateField';
 import { QuickAdd } from '../ui/QuickAdd';
+import { ConfirmButton } from '../ui/ConfirmButton';
 
 type System = 'g' | 'j';
 const WEEK_EN = ['Sat', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
@@ -381,7 +382,7 @@ function ReminderEditor({ value, places, tasks, onCancel, onSaved }: {
         <div className="row">
           <button type="submit" className="btn primary lg" disabled={!title.trim() || !day}><Check aria-hidden /> {t('save')}</button>
           {value.id && (
-            <button type="button" className="btn ghost danger" onClick={() => void api.reminderDelete(value.id!).then(onSaved)}><Trash2 aria-hidden /> {t('delete')}</button>
+            <ConfirmButton className="btn ghost danger" onConfirm={() => void api.reminderDelete(value.id!).then(onSaved)}><Trash2 aria-hidden /> {t('delete')}</ConfirmButton>
           )}
         </div>
       </form>

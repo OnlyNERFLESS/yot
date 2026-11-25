@@ -1,6 +1,8 @@
-<p align="center"><img src="app/public/logo.png" width="96" alt="YOT logo"></p>
+<p align="center"><img src="app/public/logo.png" width="96" alt="Waymate logo"></p>
 
-<h1 align="center">YOT — Your Own Tasks</h1>
+<h1 align="center">Waymate</h1>
+
+<p align="center"><em>Formerly YOT (Your Own Tasks).</em></p>
 
 <p align="center">An offline-first map, metro, reminder and task app for field work in Tehran.<br>
 Android and Windows, English and Persian (RTL), one codebase.</p>
@@ -21,7 +23,7 @@ Android and Windows, English and Persian (RTL), one codebase.</p>
 
 Checksums and release notes: [all releases](https://github.com/OnlyNERFLESS/yot/releases).
 
-**Android:** open the APK on the phone and allow "Install unknown apps" when asked. On first launch YOT unpacks its maps, then asks for location and notification permission.
+**Android:** open the APK on the phone and allow "Install unknown apps" when asked. On first launch Waymate unpacks its maps, then asks for location and notification permission.
 **Windows:** run the setup. If SmartScreen appears, choose **More info → Run anyway** (the installer is not code-signed yet).
 
 The maps, routing, search and metro are built in, so there is nothing to set up.

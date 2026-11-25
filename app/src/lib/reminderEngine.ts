@@ -11,7 +11,11 @@ import { watch, type Fix } from './location';
 import { distM } from './nav';
 
 const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
-const HORIZON = 7 * 86_400_000;
+// Android schedules ahead so alerts fire with the app closed; it is refreshed
+// whenever the app opens. A week ran dry for anyone who did not open it for a
+// week, so look 30 days ahead, soonest first, within the OS's alarm budget.
+const HORIZON = 30 * 86_400_000;
+const MAX_SCHEDULED = 400;
 const FIRED_KEY = 'yot.fired';
 export const SNOOZE_MINUTES = [5, 15, 60] as const;
 
@@ -107,13 +111,16 @@ export function startReminderEngine(getLang: () => 'en' | 'fa', snoozeLabel: (m:
   const scheduleMobile = async () => {
     await cancelAll().catch(() => undefined);
     const now = Date.now();
+    const all: { r: Reminder; at: number; occ: number; slot: number }[] = [];
     for (const r of reminders) {
       if (r.done) continue;
-      alertTimes(r, now, now + HORIZON).slice(0, 40).forEach(([at, occ], i) => {
-        sendNotification({
-          id: notifId(r.id, i), title: r.title, body: bodyOf(r, occ, getLang()),
-          schedule: Schedule.at(new Date(at), false, true), actionTypeId: 'reminder', channelId: channelOf(tone),
-        });
+      alertTimes(r, now, now + HORIZON).slice(0, 120).forEach(([at, occ], slot) => all.push({ r, at, occ, slot }));
+    }
+    all.sort((a, b) => a.at - b.at);
+    for (const { r, at, occ, slot } of all.slice(0, MAX_SCHEDULED)) {
+      sendNotification({
+        id: notifId(r.id, slot), title: r.title, body: bodyOf(r, occ, getLang()),
+        schedule: Schedule.at(new Date(at), false, true), actionTypeId: 'reminder', channelId: channelOf(tone),
       });
     }
   };

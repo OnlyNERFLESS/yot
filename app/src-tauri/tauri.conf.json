@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "YOT",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "identifier": "pro.nerfless.toolbox",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "YOT",
+        "title": "Waymate",
         "width": 1200,
         "height": 800,
         "minWidth": 360,

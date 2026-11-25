@@ -1,5 +1,6 @@
 package pro.nerfless.toolbox
 
+import android.content.Intent
 import android.os.Bundle
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -25,6 +26,20 @@ class MainActivity : TauriActivity() {
       @JavascriptInterface fun top(): Float = topDp
       @JavascriptInterface fun bottom(): Float = bottomDp
     }, "YotInsets")
+    // Android's WebView has no navigator.share; this opens the system share
+    // sheet (WhatsApp, Telegram, SMS, ...) with plain text, from the UI thread.
+    webView.addJavascriptInterface(object {
+      @JavascriptInterface fun text(subject: String, body: String) {
+        runOnUiThread {
+          val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            putExtra(Intent.EXTRA_TEXT, body)
+          }
+          startActivity(Intent.createChooser(send, subject))
+        }
+      }
+    }, "YotShare")
     ViewCompat.setOnApplyWindowInsetsListener(webView) { v, insets ->
       val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
       val d = resources.displayMetrics.density
